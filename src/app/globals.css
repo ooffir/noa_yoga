@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    direction: rtl;
+  }
+
+  body {
+    @apply bg-sand-50 text-sage-900 antialiased;
+    font-feature-settings: "kern";
+  }
+
+  ::selection {
+    @apply bg-sage-200/60;
+  }
+
+  /* RTL arrow flip — ensures chevrons point correctly in Hebrew */
+  .rtl-flip {
+    transform: scaleX(-1);
+  }
+}
+
+@layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

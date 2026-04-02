@@ -1,0 +1,272 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  Yoga Studio — Prisma Schema (Supabase)
+//  Enum names use snake_case to match existing PostgreSQL types.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ENUMS  (snake_case — matching the types already in Supabase)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum user_role {
+  STUDENT
+  ADMIN
+}
+
+enum day_of_week {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+enum booking_status {
+  CONFIRMED
+  CANCELLED
+  NO_SHOW
+}
+
+enum waitlist_status {
+  WAITING
+  PROMOTED
+  EXPIRED
+  CANCELLED
+}
+
+enum punch_card_status {
+  ACTIVE
+  EXHAUSTED
+  EXPIRED
+}
+
+enum payment_type {
+  SINGLE_CLASS
+  PUNCH_CARD
+}
+
+enum payment_status {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  NEXTAUTH v4 MODELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified") @db.Timestamptz(6)
+  name          String?
+  phone         String?
+  passwordHash  String?   @map("password_hash")
+  image         String?
+  role          user_role @default(STUDENT)
+  credits       Int       @default(0)
+
+  hasSignedHealthDeclaration Boolean   @default(false) @map("has_signed_health_declaration")
+  healthDeclSignedAt         DateTime? @map("health_decl_signed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  accounts        Account[]
+  sessions        Session[]
+  bookings        Booking[]
+  waitlistEntries WaitlistEntry[]
+  punchCards      PunchCard[]
+  payments        Payment[]
+
+  @@index([role])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime @db.Timestamptz(6)
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CLASS SCHEDULE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ClassDefinition {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  description String?
+  instructor  String
+  dayOfWeek   day_of_week @map("day_of_week")
+  startTime   String      @map("start_time")
+  endTime     String      @map("end_time")
+  maxCapacity Int         @map("max_capacity")
+  location    String?
+  isActive    Boolean     @default(true) @map("is_active")
+  isRecurring Boolean     @default(true) @map("is_recurring")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  instances ClassInstance[]
+
+  @@index([isActive, dayOfWeek])
+  @@map("class_definitions")
+}
+
+model ClassInstance {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  classDefId      String   @map("class_def_id") @db.Uuid
+  date            DateTime @db.Date
+  startTime       String   @map("start_time")
+  endTime         String   @map("end_time")
+  maxCapacity     Int      @map("max_capacity")
+  location        String?
+  currentBookings Int      @default(0) @map("current_bookings")
+  isCancelled     Boolean  @default(false) @map("is_cancelled")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  classDefinition ClassDefinition @relation(fields: [classDefId], references: [id], onDelete: Cascade)
+  bookings        Booking[]
+  waitlistEntries WaitlistEntry[]
+
+  @@unique([classDefId, date])
+  @@index([date, isCancelled])
+  @@index([classDefId])
+  @@map("class_instances")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BOOKINGS & WAITLIST
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Booking {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  classInstanceId String         @map("class_instance_id") @db.Uuid
+  status          booking_status @default(CONFIRMED)
+  punchCardId     String?        @map("punch_card_id") @db.Uuid
+  creditRefunded  Boolean        @default(false) @map("credit_refunded")
+  attendedAt      DateTime?      @map("attended_at") @db.Timestamptz(6)
+  markedBy        String?        @map("marked_by") @db.Uuid
+  bookedAt        DateTime       @default(now()) @map("booked_at") @db.Timestamptz(6)
+  cancelledAt     DateTime?      @map("cancelled_at") @db.Timestamptz(6)
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classInstance ClassInstance @relation(fields: [classInstanceId], references: [id], onDelete: Cascade)
+  punchCard     PunchCard?   @relation(fields: [punchCardId], references: [id])
+
+  @@unique([userId, classInstanceId])
+  @@index([classInstanceId, status])
+  @@index([userId, status])
+  @@map("bookings")
+}
+
+model WaitlistEntry {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  classInstanceId String          @map("class_instance_id") @db.Uuid
+  position        Int
+  status          waitlist_status @default(WAITING)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  promotedAt      DateTime?       @map("promoted_at") @db.Timestamptz(6)
+  notifiedAt      DateTime?       @map("notified_at") @db.Timestamptz(6)
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classInstance ClassInstance @relation(fields: [classInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, classInstanceId])
+  @@index([classInstanceId, status, position])
+  @@map("waitlist_entries")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PAYMENTS & CREDITS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model PunchCard {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  totalCredits     Int               @default(10) @map("total_credits")
+  remainingCredits Int               @default(10) @map("remaining_credits")
+  status           punch_card_status @default(ACTIVE)
+  paymentId        String?           @unique @map("payment_id") @db.Uuid
+  purchasedAt      DateTime          @default(now()) @map("purchased_at") @db.Timestamptz(6)
+  expiresAt        DateTime?         @map("expires_at") @db.Timestamptz(6)
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payment  Payment?  @relation(fields: [paymentId], references: [id])
+  bookings Booking[]
+
+  @@index([userId, status, purchasedAt])
+  @@map("punch_cards")
+}
+
+model Payment {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  stripeSessionId String?        @unique @map("stripe_session_id")
+  stripePaymentId String?        @map("stripe_payment_id")
+  amount          Int
+  currency        String         @default("ILS")
+  type            payment_type
+  status          payment_status @default(PENDING)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  punchCard PunchCard?
+
+  @@index([userId])
+  @@index([status, createdAt])
+  @@map("payments")
+}
