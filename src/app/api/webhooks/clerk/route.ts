@@ -2,8 +2,7 @@ import { Webhook } from "svix";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
-const ADMIN_EMAIL = "omer609994@gmail.com";
+import { isAdminEmail } from "@/lib/admin";
 
 export async function POST(req: Request) {
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
@@ -42,7 +41,7 @@ export async function POST(req: Request) {
     if (!email) return NextResponse.json({ error: "No email" }, { status: 400 });
 
     const name = [first_name, last_name].filter(Boolean).join(" ") || null;
-    const isAdmin = email === ADMIN_EMAIL;
+    const isAdmin = isAdminEmail(email);
 
     await prisma.user.upsert({
       where: { email },

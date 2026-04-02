@@ -2,8 +2,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
-
-const ADMIN_EMAIL = "omer609994@gmail.com";
+import { isAdminEmail } from "@/lib/admin";
 
 type SessionClaimsMap = Record<string, unknown> | null | undefined;
 
@@ -63,9 +62,14 @@ export const getSharedUser = cache(async () => {
         email: identity.email,
         name: identity.name,
         image: identity.image,
-        role: identity.email === ADMIN_EMAIL ? "ADMIN" : "STUDENT",
+        role: isAdminEmail(identity.email) ? "ADMIN" : "STUDENT",
         hasSignedHealthDeclaration: false,
       },
+    });
+  } else if (isAdminEmail(identity.email) && dbUser.role !== "ADMIN") {
+    dbUser = await prisma.user.update({
+      where: { id: dbUser.id },
+      data: { role: "ADMIN" },
     });
   }
 
@@ -104,12 +108,13 @@ export async function syncUser() {
     update: {
       name: identity.name,
       image: identity.image,
+      ...(isAdminEmail(identity.email) ? { role: "ADMIN" as const } : {}),
     },
     create: {
       email: identity.email,
       name: identity.name,
       image: identity.image,
-      role: identity.email === ADMIN_EMAIL ? "ADMIN" : "STUDENT",
+      role: isAdminEmail(identity.email) ? "ADMIN" : "STUDENT",
       hasSignedHealthDeclaration: false,
     },
   });

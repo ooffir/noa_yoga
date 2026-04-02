@@ -84,9 +84,12 @@ export default async function SchedulePage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6 pb-28">
-      <div className="flex items-center justify-between mb-5">
+      <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-sage-900">מערכת שעות</h1>
+          <p className="mt-1 text-sm text-sage-500">
+            הזמינו מקום או הצטרפו לרשימת המתנה
+          </p>
           <p className="text-sm text-sage-500 mt-0.5">
             {format(weekStart, "d בMMMM", { locale: he })} – {format(addDays(weekStart, 6), "d בMMMM yyyy", { locale: he })}
           </p>
@@ -98,13 +101,13 @@ export default async function SchedulePage({ searchParams }: Props) {
         )}
       </div>
 
-      <div className="flex items-center justify-between mb-7">
+      <div className="mb-7 flex flex-row-reverse items-center justify-between">
         <Link
           href={`/schedule?week=${weekOffset + 1}`}
           className="flex items-center gap-1 rounded-2xl border border-sage-200 bg-white px-4 py-2 text-sm font-medium text-sage-600 hover:bg-sage-50 transition-colors"
         >
-          <ChevronRight className="h-4 w-4" />
           הבא
+          <ChevronLeft className="h-4 w-4" />
         </Link>
         {weekOffset !== 0 && (
           <Link href="/schedule" className="text-xs font-medium text-sage-400 hover:text-sage-600 transition-colors">
@@ -115,15 +118,15 @@ export default async function SchedulePage({ searchParams }: Props) {
           href={`/schedule?week=${weekOffset - 1}`}
           className="flex items-center gap-1 rounded-2xl border border-sage-200 bg-white px-4 py-2 text-sm font-medium text-sage-600 hover:bg-sage-50 transition-colors"
         >
+          <ChevronRight className="h-4 w-4" />
           הקודם
-          <ChevronLeft className="h-4 w-4" />
         </Link>
       </div>
 
       {Object.keys(grouped).length === 0 ? (
         <div className="rounded-3xl border border-sage-100 bg-white p-14 text-center shadow-sm">
           <CalendarDays className="h-10 w-10 text-sage-200 mx-auto mb-4" />
-          <p className="text-sage-500 text-lg font-medium">אין שיעורים בשבוע זה</p>
+          <p className="text-sage-500 text-lg font-medium">אין שיעורים מתוכננים לשבוע זה</p>
           <p className="text-sage-400 text-sm mt-1">נסי לעבור לשבוע הבא</p>
         </div>
       ) : (

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
-import { Calendar, Heart, ArrowLeft, CreditCard, Clock } from "lucide-react";
+import { Calendar, Heart, ArrowLeft, CreditCard, Clock, Flower2 } from "lucide-react";
 
 export const revalidate = 3600;
 
@@ -8,12 +8,25 @@ export default async function LandingPage() {
   return (
     <div className="min-h-screen bg-sand-50">
       <nav className="sticky top-0 z-50 border-b border-sage-100/50 bg-white/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex h-16 max-w-5xl flex-row-reverse items-center justify-between gap-2 px-4">
+          <div className="shrink-0">
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-sage-800"
+              aria-label="נועה יוגה"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sage-100 text-sage-700">
+                <Flower2 className="h-4 w-4" />
+              </span>
+              <span className="hidden text-lg font-bold sm:block">נועה יוגה</span>
+            </Link>
+          </div>
+
+          <div className="flex min-w-0 flex-1 items-center justify-center gap-3 overflow-hidden">
             <Show when="signed-in">
               <Link
                 href="/profile"
-                className="rounded-2xl bg-sage-100 px-4 py-2 text-sm font-medium text-sage-700 hover:bg-sage-200 transition-colors"
+                className="rounded-2xl bg-sage-100 px-4 py-2 text-sm font-medium text-sage-700 transition-colors hover:bg-sage-200"
               >
                 אזור אישי
               </Link>
@@ -22,13 +35,13 @@ export default async function LandingPage() {
               <div className="flex items-center gap-2">
                 <Link
                   href="/sign-in"
-                  className="rounded-2xl bg-sage-600 px-4 py-2 text-sm font-medium text-white hover:bg-sage-700 transition-colors"
+                  className="rounded-2xl bg-sage-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-sage-700 sm:px-4 sm:text-sm"
                 >
                   התחברות
                 </Link>
                 <Link
                   href="/sign-up"
-                  className="rounded-2xl border border-sage-200 px-4 py-2 text-sm font-medium text-sage-600 hover:bg-sage-50 transition-colors"
+                  className="rounded-2xl border border-sage-200 px-3 py-2 text-xs font-medium text-sage-600 transition-colors hover:bg-sage-50 sm:px-4 sm:text-sm"
                 >
                   הרשמה
                 </Link>
@@ -36,11 +49,7 @@ export default async function LandingPage() {
             </Show>
           </div>
 
-          <Link href="/" className="absolute right-1/2 translate-x-1/2 flex items-center gap-2">
-            <span className="text-xl font-bold text-sage-800">נועה יוגה</span>
-          </Link>
-
-          <div className="flex items-center gap-2">
+          <div className="z-10 flex shrink-0 items-center gap-2">
             <Show when="signed-in">
               <UserButton />
             </Show>
