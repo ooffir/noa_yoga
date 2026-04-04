@@ -1,21 +1,12 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
 import { getSessionUser } from "@/lib/auth-helpers";
-import { prisma } from "@/lib/prisma";
 import { Flower2, CalendarDays, Home, CircleUserRound, Settings } from "lucide-react";
 
 export async function Navbar() {
   const dbUser = await getSessionUser();
   const isAdmin = dbUser?.role === "ADMIN";
-
-  let totalCredits = dbUser?.credits ?? 0;
-  if (dbUser) {
-    const pcCredits = await prisma.punchCard.aggregate({
-      where: { userId: dbUser.id, status: "ACTIVE" },
-      _sum: { remainingCredits: true },
-    });
-    totalCredits += pcCredits._sum.remainingCredits ?? 0;
-  }
+  const totalCredits = dbUser?.credits ?? 0;
 
   return (
     <header dir="rtl" className="sticky top-0 z-[100] w-full border-b border-sage-100 bg-[#FDFBF7]">

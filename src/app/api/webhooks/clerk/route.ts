@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   }
 
   if (event.type === "user.created" || event.type === "user.updated") {
-    const { email_addresses, first_name, last_name, image_url } = event.data;
+    const { id: clerkId, email_addresses, first_name, last_name, image_url } = event.data;
     const email = email_addresses?.[0]?.email_address;
     if (!email) return NextResponse.json({ error: "No email" }, { status: 400 });
 
@@ -45,8 +45,9 @@ export async function POST(req: Request) {
 
     await prisma.user.upsert({
       where: { email },
-      update: { name, image: image_url, ...(isAdmin ? { role: "ADMIN" as const } : {}) },
+      update: { clerkId, name, image: image_url, ...(isAdmin ? { role: "ADMIN" as const } : {}) },
       create: {
+        clerkId,
         email,
         name,
         image: image_url,

@@ -4,74 +4,61 @@ import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { isAdminEmail } from "@/lib/admin";
 
-type SessionClaimsMap = Record<string, unknown> | null | undefined;
-
-function getStringClaim(claims: SessionClaimsMap, key: string) {
-  const value = claims?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-const getSharedIdentity = cache(async () => {
-  const { userId, sessionClaims } = await auth();
-  if (!userId) return null;
-
-  const claims = sessionClaims as SessionClaimsMap;
-  let email = getStringClaim(claims, "email");
-  let firstName = getStringClaim(claims, "first_name");
-  let lastName = getStringClaim(claims, "last_name");
-  let image = getStringClaim(claims, "image_url");
-
-  if (!email) {
-    let clerkUser = null;
-    try {
-      clerkUser = await currentUser();
-    } catch {
-      return null;
-    }
-
-    if (!clerkUser?.emailAddresses?.[0]) return null;
-    email = clerkUser.emailAddresses[0].emailAddress;
-    firstName = clerkUser.firstName || firstName;
-    lastName = clerkUser.lastName || lastName;
-    image = clerkUser.imageUrl || image;
-  }
-
-  return {
-    userId,
-    email,
-    name: [firstName, lastName].filter(Boolean).join(" ") || null,
-    image: image || null,
-  };
-});
-
 /**
- * Per-request cached lookup — resolves Clerk session to a DB user.
- * Uses findUnique (fast read) instead of upsert (slow write).
- * Only creates the user if they genuinely don't exist yet.
- * Wrapped in React.cache() so duplicate calls within one request are free.
+ * Per-request cached user resolver.
+ *
+ * Performance strategy:
+ *   1. auth() — instant, reads JWT from cookie, no network call
+ *   2. prisma.user.findUnique({ clerkId }) — single indexed DB read
+ *   3. currentUser() — ONLY called on first-ever sign-in when no DB row exists
+ *
+ * This eliminates the Clerk API round-trip on every page load.
  */
 export const getSharedUser = cache(async () => {
-  const identity = await getSharedIdentity();
-  if (!identity?.email) return null;
+  const { userId: clerkId } = await auth();
+  if (!clerkId) return null;
 
-  let dbUser = await prisma.user.findUnique({ where: { email: identity.email } });
+  let dbUser = await prisma.user.findUnique({ where: { clerkId } });
 
-  if (!dbUser) {
-    dbUser = await prisma.user.create({
-      data: {
-        email: identity.email,
-        name: identity.name,
-        image: identity.image,
-        role: isAdminEmail(identity.email) ? "ADMIN" : "STUDENT",
-        hasSignedHealthDeclaration: false,
-      },
-    });
-  } else if (isAdminEmail(identity.email) && dbUser.role !== "ADMIN") {
+  if (dbUser) return dbUser;
+
+  let clerkUser = null;
+  try {
+    clerkUser = await currentUser();
+  } catch {
+    return null;
+  }
+  if (!clerkUser?.emailAddresses?.[0]) return null;
+
+  const email = clerkUser.emailAddresses[0].emailAddress;
+  const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+  const image = clerkUser.imageUrl || null;
+
+  dbUser = await prisma.user.findUnique({ where: { email } });
+
+  if (dbUser) {
     dbUser = await prisma.user.update({
       where: { id: dbUser.id },
-      data: { role: "ADMIN" },
+      data: {
+        clerkId,
+        name,
+        image,
+        ...(isAdminEmail(email) && dbUser.role !== "ADMIN" ? { role: "ADMIN" as const } : {}),
+      },
     });
+    return dbUser;
   }
+
+  dbUser = await prisma.user.create({
+    data: {
+      clerkId,
+      email,
+      name,
+      image,
+      role: isAdminEmail(email) ? "ADMIN" : "STUDENT",
+      hasSignedHealthDeclaration: false,
+    },
+  });
 
   return dbUser;
 });
@@ -94,27 +81,36 @@ export async function getCurrentUser() {
   return getSharedUser();
 }
 
-/**
- * Full sync — only call from the Clerk webhook or explicit profile update.
- */
 export async function syncUser() {
-  const identity = await getSharedIdentity();
-  if (!identity?.email) {
+  const { userId: clerkId } = await auth();
+  if (!clerkId) return null;
+
+  let clerkUser = null;
+  try {
+    clerkUser = await currentUser();
+  } catch {
     return null;
   }
+  if (!clerkUser?.emailAddresses?.[0]) return null;
+
+  const email = clerkUser.emailAddresses[0].emailAddress;
+  const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+  const image = clerkUser.imageUrl || null;
 
   return prisma.user.upsert({
-    where: { email: identity.email },
+    where: { email },
     update: {
-      name: identity.name,
-      image: identity.image,
-      ...(isAdminEmail(identity.email) ? { role: "ADMIN" as const } : {}),
+      clerkId,
+      name,
+      image,
+      ...(isAdminEmail(email) ? { role: "ADMIN" as const } : {}),
     },
     create: {
-      email: identity.email,
-      name: identity.name,
-      image: identity.image,
-      role: isAdminEmail(identity.email) ? "ADMIN" : "STUDENT",
+      clerkId,
+      email,
+      name,
+      image,
+      role: isAdminEmail(email) ? "ADMIN" : "STUDENT",
       hasSignedHealthDeclaration: false,
     },
   });
