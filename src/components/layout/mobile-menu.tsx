@@ -39,11 +39,11 @@ export function MobileMenu({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[60] md:hidden" dir="rtl">
+        <div className="fixed inset-0 z-[100] md:hidden" dir="rtl">
           <button
             type="button"
             aria-label="סגירת תפריט"
-            className="absolute inset-0 bg-sage-950/25 backdrop-blur-[1px]"
+            className="absolute inset-0 bg-sage-950/35"
             onClick={() => setOpen(false)}
           />
 
