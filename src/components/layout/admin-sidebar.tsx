@@ -6,10 +6,10 @@ import { SignOutButton } from "@clerk/nextjs";
 import { LayoutDashboard, Calendar, Users, LogOut, Home, UserCog } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const sidebarItems = [
+const adminItems = [
   { href: "/admin", icon: LayoutDashboard, label: "לוח בקרה" },
-  { href: "/admin/schedule", icon: Calendar, label: "ניהול שיעורים" },
-  { href: "/admin/users", icon: UserCog, label: "ניהול תלמידות" },
+  { href: "/admin/schedule", icon: Calendar, label: "שיעורים" },
+  { href: "/admin/users", icon: UserCog, label: "תלמידות" },
   { href: "/admin/attendance", icon: Users, label: "נוכחות" },
 ];
 
@@ -17,89 +17,43 @@ export function AdminSidebar() {
   const pathname = usePathname();
 
   return (
-    <>
-      <div className="md:hidden border-b border-sage-100 bg-white">
-        <div className="overflow-x-auto whitespace-nowrap px-4 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex w-max min-w-full items-center gap-2">
-            {sidebarItems.map((item) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-sage-600 text-white"
-                      : "bg-sage-50 text-sage-600 hover:bg-sage-100"
-                  )}
-                >
-                  <item.icon className="h-4 w-4" />
-                  {item.label}
-                </Link>
-              );
-            })}
-
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium text-sage-600 bg-sage-50 hover:bg-sage-100 transition-colors"
-            >
-              <Home className="h-4 w-4" />
-              חזרה לאתר
-            </Link>
-
-            <SignOutButton>
-              <button className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium text-red-500 bg-red-50 hover:bg-red-100 transition-colors">
-                <LogOut className="h-4 w-4" />
-                התנתקות
-              </button>
-            </SignOutButton>
-          </div>
-        </div>
-      </div>
-
-      <aside className="hidden md:flex md:w-60 flex-col border-l border-sage-100 bg-white">
-        <div className="flex h-16 items-center justify-center border-b border-sage-100 px-6">
-          <span className="text-lg font-bold text-sage-800">ניהול מערכת</span>
-        </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          {sidebarItems.map((item) => {
+    <div dir="rtl" className="sticky top-[57px] z-40 w-full border-b border-sage-100 bg-white/95 backdrop-blur-xl shadow-sm">
+      <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
+        <div className="flex min-w-full items-center gap-1.5 px-4 py-2 md:mx-auto md:max-w-7xl md:gap-2 md:px-8">
+          {adminItems.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition-colors",
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-medium transition-colors",
                   isActive
-                    ? "bg-sage-50 text-sage-900"
-                    : "text-sage-500 hover:bg-sage-50 hover:text-sage-700"
+                    ? "bg-sage-600 text-white shadow-sm"
+                    : "bg-sage-50 text-sage-600 hover:bg-sage-100 active:bg-sage-200"
                 )}
               >
-                <item.icon className="h-5 w-5" />
+                <item.icon className="h-4 w-4" />
                 {item.label}
               </Link>
             );
           })}
-        </nav>
 
-        <div className="border-t border-sage-100 p-4 space-y-1">
-          <Link
-            href="/"
-            className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm text-sage-500 hover:bg-sage-50 transition-colors"
-          >
-            <Home className="h-5 w-5" />
-            חזרה לאתר
+          <span className="mx-1 h-5 w-px shrink-0 bg-sage-200" />
+
+          <Link href="/" className="inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-medium text-sage-500 transition-colors hover:bg-sage-50">
+            <Home className="h-4 w-4" />
+            <span className="hidden sm:inline">חזרה לאתר</span>
           </Link>
+
           <SignOutButton>
-            <button className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm text-red-500 hover:bg-red-50 transition-colors">
-              <LogOut className="h-5 w-5" />
-              התנתקות
+            <button className="inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-medium text-red-500 transition-colors hover:bg-red-50 active:bg-red-100">
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">התנתקות</span>
             </button>
           </SignOutButton>
         </div>
-      </aside>
-    </>
+      </div>
+    </div>
   );
 }

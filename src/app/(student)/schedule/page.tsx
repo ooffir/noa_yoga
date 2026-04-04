@@ -83,10 +83,10 @@ export default async function SchedulePage({ searchParams }: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-6 pb-28">
-      <div className="mb-5 flex items-start justify-between gap-3">
+    <div className="mx-auto max-w-lg px-5 py-8 pb-12">
+      <div className="mb-6 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-sage-900">מערכת שעות</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-sage-900">מערכת שעות</h1>
           <p className="mt-1 text-sm text-sage-500">
             הזמינו מקום או הצטרפו לרשימת המתנה
           </p>
@@ -101,7 +101,7 @@ export default async function SchedulePage({ searchParams }: Props) {
         )}
       </div>
 
-      <div className="mb-7 flex flex-row-reverse items-center justify-between">
+      <div className="mb-8 flex flex-row-reverse items-center justify-between">
         <Link
           href={`/schedule?week=${weekOffset + 1}`}
           className="flex items-center gap-1 rounded-2xl border border-sage-200 bg-white px-4 py-2 text-sm font-medium text-sage-600 hover:bg-sage-50 transition-colors"

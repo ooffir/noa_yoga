@@ -20,7 +20,6 @@
     @apply bg-sage-200/60;
   }
 
-  /* RTL arrow flip — ensures chevrons point correctly in Hebrew */
   .rtl-flip {
     transform: scaleX(-1);
   }
@@ -29,5 +28,13 @@
 @layer utilities {
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 }
