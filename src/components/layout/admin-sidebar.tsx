@@ -17,7 +17,7 @@ export function AdminSidebar() {
   const pathname = usePathname();
 
   return (
-    <div dir="rtl" className="sticky top-[57px] z-40 w-full border-b border-sage-100 bg-white/95 backdrop-blur-xl shadow-sm">
+    <div dir="rtl" className="sticky top-[57px] z-[90] w-full border-b border-sage-100 bg-[#FDFBF7] shadow-sm">
       <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
         <div className="flex min-w-full items-center gap-1.5 px-4 py-2 md:mx-auto md:max-w-7xl md:gap-2 md:px-8">
           {adminItems.map((item) => {

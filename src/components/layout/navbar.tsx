@@ -18,7 +18,7 @@ export async function Navbar() {
   }
 
   return (
-    <header dir="rtl" className="sticky top-0 z-50 w-full border-b border-sage-100/50 bg-white/95 backdrop-blur-xl">
+    <header dir="rtl" className="sticky top-0 z-[100] w-full border-b border-sage-100 bg-[#FDFBF7]">
       <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
         <div className="flex min-w-full items-center gap-1.5 px-4 py-2.5 md:mx-auto md:max-w-7xl md:gap-2 md:px-8">
           <Link href="/" className="flex shrink-0 items-center gap-2 pl-2 text-sage-800" aria-label="נועה יוגה">

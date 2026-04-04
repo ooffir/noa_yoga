@@ -26,7 +26,7 @@ export default async function LandingPage() {
   return (
     <div className="min-h-screen bg-sand-50">
       {/* ── כותרת עליונה ── */}
-      <nav dir="rtl" className="sticky top-0 z-50 border-b border-sage-100/50 bg-white/80 backdrop-blur-xl">
+      <nav dir="rtl" className="sticky top-0 z-[100] border-b border-sage-100 bg-[#FDFBF7]">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 md:px-8">
           <div className="flex shrink-0 items-center gap-2">
             <Show when="signed-in">
