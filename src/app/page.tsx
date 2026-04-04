@@ -100,14 +100,13 @@ export default async function LandingPage() {
           </div>
 
           <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-sage-900 leading-[1.2] max-w-2xl mx-auto">
-            המסע אל השקט הפנימי
-            <span className="block text-sage-600 mt-1">מתחיל בנשימה</span>
+            יוגה היא התנסות ישירה.
+            <span className="block text-sage-600 mt-1">המסע אל התודעה.</span>
           </h1>
 
           <p className="mt-6 text-lg text-sage-500 leading-relaxed max-w-lg mx-auto">
-            הצטרפו לקהילת היוגה שלנו. מרחב של תנועה מודעת, התבוננות וחיבור
-            לכאן ועכשיו. מקום לשחרר את העבר, לא לדאוג מהעתיד, ופשוט לנשום את
-            ההווה.
+            תהליך של קילוף שכבות, חזרה פנימה ויצירת מרחב שקט. היוגה מתחילה
+            במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -131,20 +130,20 @@ export default async function LandingPage() {
           {[
             {
               icon: Wind,
-              title: "הכל משתנה (ארעיות)",
-              desc: "ויניאסה דינמית שמלמדת אותנו לשחרר, להרפות, ולהיות בתנועה מתמדת יחד עם קצב החיים.",
+              title: "קילוף שכבות",
+              desc: "תהליך של חזרה פנימה ויצירת מרחב שקט בתוך התודעה. התנסות ישירה שמובילה לחיבור עמוק.",
               color: "bg-sage-50 text-sage-600",
             },
             {
               icon: Heart,
-              title: "כשהנשימה שקטה, התודעה שקטה",
-              desc: "תרגול הממקד את תשומת הלב פנימה, אל השאיפה והנשיפה. כאן ועכשיו, הרגע הזה הוא כל מה שיש.",
+              title: "הרמוניה ואיזון",
+              desc: "בעזרת העבודה עם הגוף, הדיוק שלו והנשימה, אנחנו מייצרים איזון שמשפיע על כל מציאות חיינו.",
               color: "bg-sand-50 text-sand-700",
             },
             {
               icon: Flower2,
-              title: "דרך האמצע",
-              desc: "איזון עדין בין מאמץ לשחרור. תרגול המותאם לכל הרמות ומאפשר לכל אחד ואחת למצוא את המרכז של עצמו.",
+              title: "אחריות אישית",
+              desc: "האחריות היא בידינו – על הגוף שלנו, על האופן שבו נגיב לחיים, ועל מה שנבחר להכניס למפתח ביתנו.",
               color: "bg-brand-50 text-brand-600",
             },
           ].map((f) => (
@@ -156,6 +155,45 @@ export default async function LandingPage() {
               <p className="text-sm text-sage-500 leading-relaxed">{f.desc}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-4 pb-20">
+        <div className="rounded-4xl border border-sage-100 bg-white p-8 sm:p-10 shadow-sm">
+          <div className="mb-8 text-center">
+            <h2 className="text-3xl font-bold text-sage-900">נעים להכיר</h2>
+            <p className="mt-2 text-sm text-sage-500">
+              דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-3xl space-y-4 text-right text-base leading-loose text-sage-600 font-light">
+            <p>נעים להכיר,</p>
+            <p>נועה אופיר, בת 22</p>
+            <p>חיפאית (Born and Raised)</p>
+            <p>מורה מוסמכת ליוגה (500 שעות)</p>
+            <p>ומאמינה ביוגה כדרך חיים-</p>
+            <p>ככלי שמשרת אותנו בתוך היומיום,</p>
+            <p>ועוזר לנו לבחור טוב יותר, עבור עצמנו.</p>
+
+            <p>המסע שלי התחיל בסקרנות לעולמות המזרח.</p>
+            <p>רצון להעמיק ולהבין- על מה כולם מדברים?</p>
+
+            <p>הוא התחיל בהודו, עבר דרך מנזרי שתיקה,</p>
+            <p>העמקה בעולם הבודהיזם ותרגול מדיטציה.</p>
+            <p>המשיך באשראמים מסורתיים,</p>
+            <p>נחשפתי לעומק של דרך היוגה.</p>
+            <p>למדתי ממורים מיוחדים במינם,</p>
+            <p>התנסיתי בהאטה יוגה קלאסית ועד לאשטנגה דינמית ומאתגרת.</p>
+            <p>עם הזמן הבנתי- שהיוגה היא הדרך המדויקת ביותר עבורי אל עצמי.</p>
+            <p>
+              בשיעורים שלי אנחנו מתרגלים חוסן ומשמעת עצמית, אבל עם מקום לרכות,
+              להתמסרות לתהליכים שאי אפשר לזרז.
+            </p>
+            <p>היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא גם יוצאת משם.</p>
+            <p>מזמינה אתכם להצטרף אליי לתרגל,</p>
+            <p>יש מקום לכולם❤️</p>
+          </div>
         </div>
       </section>
 

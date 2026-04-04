@@ -3,6 +3,7 @@ import { Show, UserButton } from "@clerk/nextjs";
 import { getSessionUser } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { CircleUserRound, Flower2 } from "lucide-react";
+import { MobileMenu } from "@/components/layout/mobile-menu";
 
 export async function Navbar() {
   const dbUser = await getSessionUser();
@@ -25,6 +26,14 @@ export async function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between w-full">
         <div className="flex shrink-0 items-center gap-2 md:gap-3">
+          <div className="md:hidden">
+            <MobileMenu
+              signedIn={Boolean(dbUser)}
+              isAdmin={isAdmin}
+              totalCredits={totalCredits}
+            />
+          </div>
+
           <Show when="signed-in">
             {isAdmin && (
               <Link
@@ -36,7 +45,7 @@ export async function Navbar() {
             )}
             <Link
               href="/profile"
-              className="flex items-center gap-1.5 rounded-xl bg-sage-50 px-2.5 py-1.5 text-xs font-medium text-sage-600 transition-colors hover:bg-sage-100 sm:px-3 sm:text-sm"
+              className="hidden md:flex items-center gap-1.5 rounded-xl bg-sage-50 px-2.5 py-1.5 text-xs font-medium text-sage-600 transition-colors hover:bg-sage-100 sm:px-3 sm:text-sm"
             >
               <CircleUserRound className="h-4 w-4" />
               <span className="hidden md:inline">אזור אישי</span>
@@ -44,7 +53,7 @@ export async function Navbar() {
                 {totalCredits}
               </span>
             </Link>
-            <div className="shrink-0">
+            <div className="hidden shrink-0 md:block">
               <UserButton />
             </div>
             {firstName && (
@@ -57,13 +66,13 @@ export async function Navbar() {
           <Show when="signed-out">
             <Link
               href="/sign-in"
-              className="rounded-xl bg-sage-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sage-700 sm:px-3 sm:text-sm"
+              className="hidden md:inline-flex rounded-xl bg-sage-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sage-700 sm:px-3 sm:text-sm"
             >
               התחברות
             </Link>
             <Link
               href="/sign-up"
-              className="rounded-xl border border-sage-200 px-2.5 py-1.5 text-xs font-medium text-sage-600 transition-colors hover:bg-sage-50 sm:px-3 sm:text-sm"
+              className="hidden md:inline-flex rounded-xl border border-sage-200 px-2.5 py-1.5 text-xs font-medium text-sage-600 transition-colors hover:bg-sage-50 sm:px-3 sm:text-sm"
             >
               הרשמה
             </Link>
