@@ -271,3 +271,34 @@ model Payment {
   @@index([status, createdAt])
   @@map("payments")
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ARTICLES (internal blog managed by admin)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Article {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title     String
+  slug      String   @unique
+  content   String
+  imageUrl  String   @map("image_url")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("articles")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SITE SETTINGS (singleton — about me, etc.)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model SiteSettings {
+  id              String  @id @default("main")
+  aboutTitle      String  @default("נעים להכיר") @map("about_title")
+  aboutSubtitle   String  @default("") @map("about_subtitle")
+  aboutContent    String  @default("") @map("about_content")
+  profileImageUrl String? @map("profile_image_url")
+
+  @@map("site_settings")
+}

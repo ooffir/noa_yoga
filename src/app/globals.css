@@ -25,6 +25,47 @@
   }
 }
 
+@layer components {
+  .prose-article p {
+    margin-bottom: 1rem;
+  }
+  .prose-article h2 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+  .prose-article h3 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .prose-article ul,
+  .prose-article ol {
+    padding-right: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .prose-article li {
+    margin-bottom: 0.375rem;
+  }
+  .prose-article strong,
+  .prose-article b {
+    font-weight: 600;
+  }
+  .prose-article a {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .prose-article blockquote {
+    border-right: 3px solid;
+    padding-right: 1rem;
+    margin: 1.5rem 0;
+    font-style: italic;
+    opacity: 0.85;
+  }
+}
+
 @layer utilities {
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom);

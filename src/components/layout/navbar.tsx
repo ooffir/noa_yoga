@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
 import { getSessionUser } from "@/lib/auth-helpers";
-import { Flower2, CalendarDays, Home, CircleUserRound, Settings } from "lucide-react";
+import { Flower2, CalendarDays, Home, CircleUserRound, Settings, Newspaper } from "lucide-react";
 
 export async function Navbar() {
   const dbUser = await getSessionUser();
@@ -12,11 +12,11 @@ export async function Navbar() {
     <header dir="rtl" className="sticky top-0 z-[100] w-full border-b border-sage-100 bg-[#FDFBF7]">
       <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
         <div className="flex min-w-full items-center gap-1.5 px-4 py-2.5 md:mx-auto md:max-w-7xl md:gap-2 md:px-8">
-          <Link href="/" className="flex shrink-0 items-center gap-2 pl-2 text-sage-800" aria-label="נועה יוגה">
+          <Link href="/" className="flex shrink-0 items-center gap-2 pl-2 text-sage-800" aria-label="Noa Yogis">
             <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sage-100 text-sage-700">
               <Flower2 className="h-4 w-4" />
             </span>
-            <span className="text-base font-bold md:text-lg">נועה יוגה</span>
+            <span className="text-base font-bold md:text-lg">Noa Yogis</span>
           </Link>
 
           <span className="mx-1 hidden h-5 w-px shrink-0 bg-sage-200 sm:block" />
@@ -29,6 +29,11 @@ export async function Navbar() {
           <Link href="/schedule" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
             <CalendarDays className="h-4 w-4" />
             מערכת שעות
+          </Link>
+
+          <Link href="/articles" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
+            <Newspaper className="h-4 w-4" />
+            <span className="hidden sm:inline">תכנים נוספים</span>
           </Link>
 
           <Show when="signed-in">

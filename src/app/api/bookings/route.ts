@@ -39,7 +39,7 @@ export async function POST(req: Request) {
         bookingId: result.booking.id,
         calendarEvent: instance
           ? {
-              title: `נועה יוגה – ${instance.classDefinition.title}`,
+              title: `Noa Yogis – ${instance.classDefinition.title}`,
               date: instance.date,
               startTime: instance.startTime,
               endTime: instance.endTime,

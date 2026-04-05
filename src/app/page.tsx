@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
 import { Wind, Heart, ArrowLeft, Flower2 } from "lucide-react";
+import { prisma } from "@/lib/prisma";
 
 export const revalidate = 3600;
 
@@ -22,7 +23,46 @@ function WhatsAppBrandIcon() {
   );
 }
 
+const DEFAULT_ABOUT = `נועה אופיר, בת 22
+חיפאית (Born and Raised)
+מורה מוסמכת ליוגה (500 שעות)
+ומאמינה ביוגה כדרך חיים-
+ככלי שמשרת אותנו בתוך היומיום,
+ועוזר לנו לבחור טוב יותר, עבור עצמנו.
+
+המסע שלי התחיל בסקרנות לעולמות המזרח.
+רצון להעמיק ולהבין- על מה כולם מדברים?
+
+הוא התחיל בהודו, עבר דרך מנזרי שתיקה,
+העמקה בעולם הבודהיזם ותרגול מדיטציה.
+המשיך באשראמים מסורתיים,
+נחשפתי לעומק של דרך היוגה.
+למדתי ממורים מיוחדים במינם,
+התנסיתי בהאטה יוגה קלאסית ועד לאשטנגה דינמית ומאתגרת.
+עם הזמן הבנתי- שהיוגה היא הדרך המדויקת ביותר עבורי אל עצמי.
+
+בשיעורים שלי אנחנו מתרגלים חוסן ומשמעת עצמית, אבל עם מקום לרכות, להתמסרות לתהליכים שאי אפשר לזרז.
+היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא גם יוצאת משם.
+
+מזמינה אתכם להצטרף אליי לתרגל,
+יש מקום לכולם❤️`;
+
+function renderAboutContent(text: string) {
+  const paragraphs = text.split("\n").filter((l) => l.trim());
+  return paragraphs.map((p, i) => <p key={i}>{p}</p>);
+}
+
 export default async function LandingPage() {
+  let aboutSettings = null;
+  try {
+    aboutSettings = await prisma.siteSettings.findUnique({ where: { id: "main" } });
+  } catch {}
+
+  const aboutTitle = aboutSettings?.aboutTitle || "נעים להכיר";
+  const aboutSubtitle = aboutSettings?.aboutSubtitle || "דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם";
+  const aboutContent = aboutSettings?.aboutContent || DEFAULT_ABOUT;
+  const profileImage = aboutSettings?.profileImageUrl || null;
+
   return (
     <div className="min-h-screen bg-sand-50">
       {/* ── כותרת עליונה ── */}
@@ -44,11 +84,11 @@ export default async function LandingPage() {
               </Link>
             </Show>
           </div>
-          <Link href="/" className="flex shrink-0 items-center gap-2 text-sage-800" aria-label="נועה יוגה">
+          <Link href="/" className="flex shrink-0 items-center gap-2 text-sage-800" aria-label="Noa Yogis">
             <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sage-100 text-sage-700">
               <Flower2 className="h-4 w-4" />
             </span>
-            <span className="text-lg font-bold">נועה יוגה</span>
+            <span className="text-lg font-bold">Noa Yogis</span>
           </Link>
         </div>
       </nav>
@@ -75,13 +115,19 @@ export default async function LandingPage() {
             במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.
           </p>
 
-          <div className="mt-12">
+          <div className="mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
               href="/schedule"
               className="group inline-flex items-center gap-2 rounded-3xl bg-sage-600 px-8 py-4 text-base font-semibold text-white shadow-lg shadow-sage-600/20 transition-all hover:bg-sage-700 hover:shadow-xl active:scale-[0.97]"
             >
               הזמינו מקום לשיעור
               <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
+            </Link>
+            <Link
+              href="/articles"
+              className="inline-flex items-center gap-2 rounded-3xl border-2 border-sage-200 bg-white px-8 py-4 text-base font-semibold text-sage-700 transition-all hover:border-sage-300 hover:bg-sage-50 active:scale-[0.97]"
+            >
+              מגזין Noa Yogis
             </Link>
           </div>
         </div>
@@ -115,36 +161,30 @@ export default async function LandingPage() {
       <section className="mx-auto max-w-5xl px-5 pb-24">
         <div className="rounded-[2rem] border border-sage-100 bg-white p-8 shadow-sm sm:p-12">
           <div className="mb-10 text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-sage-900">נעים להכיר</h2>
-            <p className="mt-3 text-sm leading-relaxed text-sage-500">
-              דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם
-            </p>
+            <h2 className="text-3xl font-bold tracking-tight text-sage-900">{aboutTitle}</h2>
+            {aboutSubtitle && (
+              <p className="mt-3 text-sm leading-relaxed text-sage-500">{aboutSubtitle}</p>
+            )}
           </div>
 
-          <div className="mx-auto max-w-2xl space-y-1 text-right text-[15px] font-light leading-[2] text-sage-600">
-            <p>נעים להכיר,</p>
-            <p>נועה אופיר, בת 22</p>
-            <p>חיפאית (Born and Raised)</p>
-            <p>מורה מוסמכת ליוגה (500 שעות)</p>
-            <p>ומאמינה ביוגה כדרך חיים-</p>
-            <p>ככלי שמשרת אותנו בתוך היומיום,</p>
-            <p>ועוזר לנו לבחור טוב יותר, עבור עצמנו.</p>
-            <p className="pt-3">המסע שלי התחיל בסקרנות לעולמות המזרח.</p>
-            <p>רצון להעמיק ולהבין- על מה כולם מדברים?</p>
-            <p className="pt-3">הוא התחיל בהודו, עבר דרך מנזרי שתיקה,</p>
-            <p>העמקה בעולם הבודהיזם ותרגול מדיטציה.</p>
-            <p>המשיך באשראמים מסורתיים,</p>
-            <p>נחשפתי לעומק של דרך היוגה.</p>
-            <p>למדתי ממורים מיוחדים במינם,</p>
-            <p>התנסיתי בהאטה יוגה קלאסית ועד לאשטנגה דינמית ומאתגרת.</p>
-            <p>עם הזמן הבנתי- שהיוגה היא הדרך המדויקת ביותר עבורי אל עצמי.</p>
-            <p className="pt-3">
-              בשיעורים שלי אנחנו מתרגלים חוסן ומשמעת עצמית, אבל עם מקום לרכות,
-              להתמסרות לתהליכים שאי אפשר לזרז.
-            </p>
-            <p>היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא גם יוצאת משם.</p>
-            <p className="pt-3">מזמינה אתכם להצטרף אליי לתרגל,</p>
-            <p>יש מקום לכולם❤️</p>
+          <div className="flex flex-col items-center gap-10 md:flex-row md:items-start">
+            {profileImage && (
+              <div className="shrink-0">
+                <img
+                  src={profileImage}
+                  alt={aboutTitle}
+                  className="h-48 w-48 rounded-3xl object-cover shadow-sm md:h-56 md:w-56"
+                />
+              </div>
+            )}
+
+            <div className="flex-1 space-y-1 text-right text-[15px] font-light leading-[2] text-sage-600">
+              {aboutContent.includes("<") ? (
+                <div dangerouslySetInnerHTML={{ __html: aboutContent }} />
+              ) : (
+                renderAboutContent(aboutContent)
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -204,7 +244,7 @@ export default async function LandingPage() {
       {/* ── פוטר ── */}
       <footer className="border-t border-sage-100 bg-white">
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row">
-          <span className="text-sm text-sage-400">© {new Date().getFullYear()} נועה יוגה. כל הזכויות שמורות.</span>
+          <span className="text-sm text-sage-400">© {new Date().getFullYear()} Noa Yogis. כל הזכויות שמורות.</span>
           <Link href="/schedule" className="text-sm text-sage-400 transition-colors hover:text-sage-600">מערכת שעות</Link>
         </div>
       </footer>

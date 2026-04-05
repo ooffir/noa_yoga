@@ -1,6 +1,6 @@
-# Noa Yoga
+# Noa Yogis
 
-`Noa Yoga` is a Hebrew-first, RTL yoga booking application built with Next.js, Clerk, Prisma, and Supabase.
+`Noa Yogis` is a Hebrew-first, RTL yoga booking application built with Next.js, Clerk, Prisma, and Supabase.
 
 It includes:
 - public landing page

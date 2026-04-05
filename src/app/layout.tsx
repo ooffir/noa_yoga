@@ -13,7 +13,7 @@ const varela = Varela_Round({
 });
 
 export const metadata: Metadata = {
-  title: "נועה יוגה",
+  title: "Noa Yogis",
   description: "סטודיו יוגה – צפייה בשיעורים והרשמה אונליין",
 };
 

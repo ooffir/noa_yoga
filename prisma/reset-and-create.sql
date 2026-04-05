@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
---  Noa Yoga — Fresh Database Schema for Supabase
+--  Noa Yogis — Fresh Database Schema for Supabase
 --  Run this in the Supabase SQL Editor.
 --  WARNING: This drops ALL existing tables and data. Clean slate.
 -- ═══════════════════════════════════════════════════════════════════════════════
