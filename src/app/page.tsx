@@ -1,22 +1,25 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
-import { Wind, Heart, ArrowLeft, Flower2 } from "lucide-react";
+import * as LucideIcons from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { unstable_cache } from "next/cache";
+
+const { Wind, Heart, ArrowLeft, Flower2 } = LucideIcons;
+
+const ICON_COLORS = [
+  "bg-sage-50 text-sage-600",
+  "bg-sand-50 text-sand-700",
+  "bg-brand-50 text-brand-600",
+  "bg-sage-100 text-sage-700",
+  "bg-sand-100 text-sand-600",
+  "bg-brand-100 text-brand-700",
+];
+
+function getIcon(name: string) {
+  const Icon = (LucideIcons as any)[name];
+  return Icon || Heart;
+}
 
 export const revalidate = 3600;
-
-const getCachedAboutSettings = unstable_cache(
-  async () => {
-    try {
-      return await prisma.siteSettings.findUnique({ where: { id: "main" } });
-    } catch {
-      return null;
-    }
-  },
-  ["site-settings"],
-  { revalidate: 3600, tags: ["site-settings"] }
-);
 
 function InstagramBrandIcon() {
   return (
@@ -66,12 +69,29 @@ function renderAboutContent(text: string) {
 }
 
 export default async function LandingPage() {
-  const aboutSettings = await getCachedAboutSettings();
+  let aboutSettings = null;
+  let featureCards: { title: string; description: string; iconName: string }[] = [];
+  try {
+    [aboutSettings, featureCards] = await Promise.all([
+      prisma.siteSettings.findUnique({ where: { id: "main" } }),
+      prisma.featureCard.findMany({ orderBy: { order: "asc" } }),
+    ]);
+    featureCards = featureCards || [];
+  } catch {}
 
+  const heroTitle = aboutSettings?.heroTitle || "יוגה היא התנסות ישירה.\nהמסע אל התודעה.";
+  const heroSubtitle = aboutSettings?.heroSubtitle || "תהליך של קילוף שכבות, חזרה פנימה ויצירת מרחב שקט. היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.";
   const aboutTitle = aboutSettings?.aboutTitle || "נעים להכיר";
   const aboutSubtitle = aboutSettings?.aboutSubtitle || "דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם";
   const aboutContent = aboutSettings?.aboutContent || DEFAULT_ABOUT;
   const profileImage = aboutSettings?.profileImageUrl || null;
+
+  const defaultCards = [
+    { title: "קילוף שכבות", description: "תהליך של חזרה פנימה ויצירת מרחב שקט בתוך התודעה. התנסות ישירה שמובילה לחיבור עמוק.", iconName: "Wind" },
+    { title: "הרמוניה ואיזון", description: "בעזרת העבודה עם הגוף, הדיוק שלו והנשימה, אנחנו מייצרים איזון שמשפיע על כל מציאות חיינו.", iconName: "Heart" },
+    { title: "אחריות אישית", description: "האחריות היא בידינו – על הגוף שלנו, על האופן שבו נגיב לחיים, ועל מה שנבחר להכניס למפתח ביתנו.", iconName: "Flower2" },
+  ];
+  const displayCards = featureCards.length > 0 ? featureCards : defaultCards;
 
   return (
     <div className="min-h-screen bg-sand-50">
@@ -116,13 +136,18 @@ export default async function LandingPage() {
           </div>
 
           <h1 className="mx-auto max-w-2xl text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
-            יוגה היא התנסות ישירה.
-            <span className="mt-2 block text-sage-600">המסע אל התודעה.</span>
+            {heroTitle.includes("\n") ? (
+              <>
+                {heroTitle.split("\n")[0]}
+                <span className="mt-2 block text-sage-600">{heroTitle.split("\n").slice(1).join(" ")}</span>
+              </>
+            ) : (
+              heroTitle
+            )}
           </h1>
 
           <p className="mx-auto mt-8 max-w-lg text-lg leading-relaxed text-sage-500">
-            תהליך של קילוף שכבות, חזרה פנימה ויצירת מרחב שקט. היוגה מתחילה
-            במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.
+            {heroSubtitle}
           </p>
 
           <div className="mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -151,19 +176,19 @@ export default async function LandingPage() {
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {[
-            { icon: Wind, title: "קילוף שכבות", desc: "תהליך של חזרה פנימה ויצירת מרחב שקט בתוך התודעה. התנסות ישירה שמובילה לחיבור עמוק.", color: "bg-sage-50 text-sage-600" },
-            { icon: Heart, title: "הרמוניה ואיזון", desc: "בעזרת העבודה עם הגוף, הדיוק שלו והנשימה, אנחנו מייצרים איזון שמשפיע על כל מציאות חיינו.", color: "bg-sand-50 text-sand-700" },
-            { icon: Flower2, title: "אחריות אישית", desc: "האחריות היא בידינו – על הגוף שלנו, על האופן שבו נגיב לחיים, ועל מה שנבחר להכניס למפתח ביתנו.", color: "bg-brand-50 text-brand-600" },
-          ].map((f) => (
-            <div key={f.title} className="rounded-3xl border border-sage-100 bg-white p-8 shadow-sm transition-shadow hover:shadow-md">
-              <div className={`mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl ${f.color}`}>
-                <f.icon className="h-5 w-5" />
+          {displayCards.map((card, idx) => {
+            const IconComponent = getIcon(card.iconName);
+            const color = ICON_COLORS[idx % ICON_COLORS.length];
+            return (
+              <div key={idx} className="rounded-3xl border border-sage-100 bg-white p-8 shadow-sm transition-shadow hover:shadow-md">
+                <div className={`mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl ${color}`}>
+                  <IconComponent className="h-5 w-5" />
+                </div>
+                <h3 className="mb-2 text-lg font-bold text-sage-900">{card.title}</h3>
+                <p className="text-sm leading-relaxed text-sage-500">{card.description}</p>
               </div>
-              <h3 className="mb-2 text-lg font-bold text-sage-900">{f.title}</h3>
-              <p className="text-sm leading-relaxed text-sage-500">{f.desc}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

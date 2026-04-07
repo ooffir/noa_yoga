@@ -3,22 +3,14 @@ import { revalidatePath } from "next/cache";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
 
-async function getOrCreate() {
-  let settings = await db.siteSettings.findUnique({ where: { id: "main" } });
-  if (!settings) {
-    settings = await db.siteSettings.create({ data: { id: "main" } });
-  }
-  return settings;
-}
-
 export async function GET() {
   try {
     const dbUser = await getDbUser();
     if (!dbUser || dbUser.role !== "ADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const settings = await getOrCreate();
-    return NextResponse.json(settings);
+    const cards = await db.featureCard.findMany({ orderBy: { order: "asc" } });
+    return NextResponse.json(cards);
   } catch {
     return NextResponse.json({ error: "שגיאה" }, { status: 500 });
   }
@@ -31,25 +23,30 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await req.json();
+    const { cards } = await req.json() as {
+      cards: { id?: string; title: string; description: string; iconName: string; order: number }[];
+    };
 
-    await getOrCreate();
+    if (!Array.isArray(cards)) {
+      return NextResponse.json({ error: "נתונים לא תקינים" }, { status: 400 });
+    }
 
-    const settings = await db.siteSettings.update({
-      where: { id: "main" },
-      data: {
-        heroTitle: body.heroTitle ?? "",
-        heroSubtitle: body.heroSubtitle ?? "",
-        aboutTitle: body.aboutTitle || "נעים להכיר",
-        aboutSubtitle: body.aboutSubtitle || "",
-        aboutContent: body.aboutContent || "",
-        profileImageUrl: body.profileImageUrl || null,
-      },
-    });
+    await db.featureCard.deleteMany({});
+
+    if (cards.length > 0) {
+      await db.featureCard.createMany({
+        data: cards.map((c, i) => ({
+          title: c.title.slice(0, 30),
+          description: c.description.slice(0, 120),
+          iconName: c.iconName || "Heart",
+          order: i,
+        })),
+      });
+    }
 
     revalidatePath("/");
     revalidatePath("/admin/settings");
-    return NextResponse.json(settings);
+    return NextResponse.json({ saved: true });
   } catch {
     return NextResponse.json({ error: "שמירה נכשלה" }, { status: 500 });
   }

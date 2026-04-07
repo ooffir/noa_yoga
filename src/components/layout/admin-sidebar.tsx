@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SignOutButton } from "@clerk/nextjs";
-import { LayoutDashboard, Calendar, Users, LogOut, Home, UserCog, Newspaper, Settings } from "lucide-react";
+import { LayoutDashboard, Calendar, Users, LogOut, Home, UserCog, Newspaper, Settings, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const adminItems = [
@@ -11,6 +11,7 @@ const adminItems = [
   { href: "/admin/schedule", icon: Calendar, label: "שיעורים" },
   { href: "/admin/users", icon: UserCog, label: "תלמידות" },
   { href: "/admin/attendance", icon: Users, label: "נוכחות" },
+  { href: "/admin/workshops", icon: Sparkles, label: "סדנאות" },
   { href: "/admin/articles", icon: Newspaper, label: "כתבות" },
   { href: "/admin/settings", icon: Settings, label: "הגדרות" },
 ];

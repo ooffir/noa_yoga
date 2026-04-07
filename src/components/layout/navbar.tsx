@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
-import { Flower2, CalendarDays, Home, CircleUserRound, Settings, Newspaper } from "lucide-react";
+import { Flower2, CalendarDays, Home, CircleUserRound, Settings, Newspaper, Sparkles } from "lucide-react";
 
 interface NavbarProps {
   isAdmin?: boolean;
@@ -33,7 +33,12 @@ export function Navbar({ isAdmin = false, totalCredits = 0 }: NavbarProps) {
 
           <Link href="/articles" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
             <Newspaper className="h-4 w-4" />
-            <span className="hidden sm:inline">תכנים נוספים</span>
+            <span className="hidden sm:inline">מגזין</span>
+          </Link>
+
+          <Link href="/workshops" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
+            <Sparkles className="h-4 w-4" />
+            סדנאות
           </Link>
 
           <Show when="signed-in">

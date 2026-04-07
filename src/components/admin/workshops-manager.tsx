@@ -1,0 +1,230 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { PageLoader, Spinner } from "@/components/ui/loading";
+import { Plus, Pencil, Trash2, Upload, ImageIcon, Users } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import toast from "react-hot-toast";
+import { format } from "date-fns";
+import { he } from "date-fns/locale";
+
+interface Workshop {
+  id: string;
+  title: string;
+  description: string;
+  date: string;
+  price: number;
+  imageUrl: string | null;
+  maxCapacity: number | null;
+  _count: { registrations: number };
+}
+
+export function WorkshopsManager() {
+  const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("10:00");
+  const [price, setPrice] = useState(0);
+  const [imageUrl, setImageUrl] = useState("");
+  const [imagePreview, setImagePreview] = useState("");
+  const [maxCapacity, setMaxCapacity] = useState<number | "">("");
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const fetchWorkshops = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/workshops");
+      const data = await res.json();
+      setWorkshops(Array.isArray(data) ? data : []);
+    } catch { toast.error("שגיאה בטעינת סדנאות"); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchWorkshops(); }, [fetchWorkshops]);
+
+  const resetForm = () => {
+    setEditId(null); setTitle(""); setDescription(""); setDate(""); setTime("10:00");
+    setPrice(0); setImageUrl(""); setImagePreview(""); setMaxCapacity("");
+  };
+
+  const openCreate = () => { resetForm(); setShowForm(true); };
+
+  const openEdit = (w: Workshop) => {
+    setEditId(w.id);
+    setTitle(w.title);
+    setDescription(w.description);
+    const d = new Date(w.date);
+    setDate(format(d, "yyyy-MM-dd"));
+    setTime(format(d, "HH:mm"));
+    setPrice(w.price);
+    setImageUrl(w.imageUrl || "");
+    setImagePreview(w.imageUrl || "");
+    setMaxCapacity(w.maxCapacity || "");
+    setShowForm(true);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImagePreview(URL.createObjectURL(file));
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/admin/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "העלאה נכשלה"); return; }
+      setImageUrl(data.url);
+      toast.success("התמונה הועלתה");
+    } catch { toast.error("העלאה נכשלה"); }
+    finally { setUploading(false); }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const dateTime = new Date(`${date}T${time}:00`).toISOString();
+      const url = editId ? `/api/admin/workshops/${editId}` : "/api/admin/workshops";
+      const method = editId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, description, date: dateTime, price, imageUrl: imageUrl || null, maxCapacity: maxCapacity || null }),
+      });
+      if (!res.ok) { const data = await res.json(); toast.error(data.error || "שגיאה"); return; }
+      toast.success(editId ? "הסדנה עודכנה" : "הסדנה נוצרה");
+      setShowForm(false); resetForm(); fetchWorkshops();
+    } catch { toast.error("שגיאה"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("להשבית סדנה זו?")) return;
+    try {
+      const res = await fetch(`/api/admin/workshops/${id}`, { method: "DELETE" });
+      if (res.ok) { toast.success("הסדנה הושבתה"); fetchWorkshops(); }
+    } catch { toast.error("מחיקה נכשלה"); }
+  };
+
+  if (loading) return <PageLoader />;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-sage-500">{workshops.length} סדנאות</p>
+        <Button onClick={openCreate} className="rounded-2xl gap-2">
+          <Plus className="h-4 w-4" />
+          סדנה חדשה
+        </Button>
+      </div>
+
+      {workshops.length === 0 ? (
+        <Card className="rounded-3xl">
+          <CardContent className="py-12 text-center text-sage-400">אין סדנאות עדיין.</CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {workshops.map((w) => (
+            <Card key={w.id} className="rounded-3xl">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {w.imageUrl && <img src={w.imageUrl} alt="" className="h-12 w-16 shrink-0 rounded-xl object-cover" />}
+                    <div className="min-w-0">
+                      <p className="font-bold text-sage-900 text-sm truncate">{w.title}</p>
+                      <p className="text-xs text-sage-400">
+                        {format(new Date(w.date), "d בMMMM yyyy · HH:mm", { locale: he })} · ₪{w.price}
+                      </p>
+                      <p className="text-xs text-sage-400 flex items-center gap-1 mt-0.5">
+                        <Users className="h-3 w-3" /> {w._count.registrations} נרשמו
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(w)}>
+                      <Pencil className="h-3.5 w-3.5 text-sage-400" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(w.id)}>
+                      <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showForm} onOpenChange={(open) => { setShowForm(open); if (!open) resetForm(); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editId ? "עריכת סדנה" : "סדנה חדשה"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 block">שם הסדנה</label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="לדוגמה: סדנת נשימה מודעת" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-sage-700 mb-1 block">תאריך</label>
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-sage-700 mb-1 block">שעה</label>
+                <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} required />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר (₪)</label>
+                <Input type="number" min={0} value={price} onChange={(e) => setPrice(parseInt(e.target.value) || 0)} required />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-sage-700 mb-1 block">מקומות (אופציונלי)</label>
+                <Input type="number" min={1} value={maxCapacity} onChange={(e) => setMaxCapacity(e.target.value ? parseInt(e.target.value) : "")} />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-2 block">תמונה</label>
+              <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+              {imagePreview ? (
+                <div className="relative rounded-2xl overflow-hidden border border-sage-200">
+                  <img src={imagePreview} alt="" className="w-full aspect-video object-cover" />
+                  <button type="button" onClick={() => fileRef.current?.click()} className="absolute inset-0 flex items-center justify-center bg-sage-950/30 text-white opacity-0 hover:opacity-100 transition-opacity">
+                    <Upload className="h-6 w-6" />
+                  </button>
+                  {uploading && <div className="absolute inset-0 flex items-center justify-center bg-white/80"><Spinner className="h-6 w-6" /></div>}
+                </div>
+              ) : (
+                <button type="button" onClick={() => fileRef.current?.click()} className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-sage-200 bg-sage-50/50 py-8 text-sm text-sage-500 transition-colors hover:border-sage-300">
+                  {uploading ? <Spinner className="h-5 w-5" /> : <ImageIcon className="h-5 w-5" />}
+                  {uploading ? "מעלה..." : "העלאת תמונה"}
+                </button>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 block">תיאור</label>
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="תיאור הסדנה..." rows={4} required className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y" />
+            </div>
+
+            <Button type="submit" className="w-full rounded-2xl" disabled={saving || uploading}>
+              {saving ? <Spinner className="h-4 w-4" /> : editId ? "שמירת שינויים" : "יצירת סדנה"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
