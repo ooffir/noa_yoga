@@ -2,8 +2,21 @@ import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
 import { Wind, Heart, ArrowLeft, Flower2 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
 
 export const revalidate = 3600;
+
+const getCachedAboutSettings = unstable_cache(
+  async () => {
+    try {
+      return await prisma.siteSettings.findUnique({ where: { id: "main" } });
+    } catch {
+      return null;
+    }
+  },
+  ["site-settings"],
+  { revalidate: 3600, tags: ["site-settings"] }
+);
 
 function InstagramBrandIcon() {
   return (
@@ -53,10 +66,7 @@ function renderAboutContent(text: string) {
 }
 
 export default async function LandingPage() {
-  let aboutSettings = null;
-  try {
-    aboutSettings = await prisma.siteSettings.findUnique({ where: { id: "main" } });
-  } catch {}
+  const aboutSettings = await getCachedAboutSettings();
 
   const aboutTitle = aboutSettings?.aboutTitle || "נעים להכיר";
   const aboutSubtitle = aboutSettings?.aboutSubtitle || "דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם";

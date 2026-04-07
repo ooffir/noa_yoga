@@ -7,11 +7,11 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdmin();
+  const dbUser = await requireAdmin();
 
   return (
     <div className="min-h-screen flex flex-col bg-sand-50">
-      <Navbar />
+      <Navbar isAdmin totalCredits={dbUser.credits} />
       <AdminSidebar />
       <main className="flex-1 p-4 md:p-8 overflow-auto">
         {children}

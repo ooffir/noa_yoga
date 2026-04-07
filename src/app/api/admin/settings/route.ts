@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
 
@@ -45,6 +45,7 @@ export async function PUT(req: Request) {
       },
     });
 
+    revalidateTag("site-settings", "max");
     revalidatePath("/");
     return NextResponse.json(settings);
   } catch {
