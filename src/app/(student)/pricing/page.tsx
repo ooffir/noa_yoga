@@ -70,7 +70,7 @@ export default function PricingPage() {
 
       window.location.href = data.url;
     } catch {
-      toast.error("משהו השתבש, נסי שוב");
+      toast.error("משהו השתבש, נסו שוב");
     } finally {
       setLoading(null);
     }
@@ -80,7 +80,7 @@ export default function PricingPage() {
     <div className="mx-auto max-w-lg px-4 py-6">
       <div className="text-center mb-10">
         <h1 className="text-2xl font-bold text-sage-900">מחירון</h1>
-        <p className="mt-2 text-sage-500">בחרי את המסלול שמתאים לתרגול שלך</p>
+        <p className="mt-2 text-sage-500">בחרו את המסלול שמתאים לתרגול שלכם</p>
       </div>
 
       <div className="space-y-5">

@@ -114,7 +114,7 @@ export default async function SchedulePage({ searchParams }: Props) {
       {Object.keys(grouped).length === 0 ? (
         <div className="rounded-3xl border border-sage-100 bg-white p-12 text-center shadow-sm">
           <p className="text-sage-400 text-lg">אין שיעורים בשבוע זה</p>
-          <p className="text-sage-300 text-sm mt-2">נסי לעבור לשבוע הבא</p>
+          <p className="text-sage-300 text-sm mt-2">נסו לעבור לשבוע הבא</p>
         </div>
       ) : (
         <div className="space-y-8">

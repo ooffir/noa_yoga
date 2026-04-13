@@ -27,6 +27,8 @@ export function SettingsEditor() {
 
   const [heroTitle, setHeroTitle] = useState("");
   const [heroSubtitle, setHeroSubtitle] = useState("");
+  const [cardsHeading, setCardsHeading] = useState("למה לתרגל איתנו");
+  const [cardsSubheading, setCardsSubheading] = useState("");
   const [aboutTitle, setAboutTitle] = useState("נעים להכיר");
   const [aboutSubtitle, setAboutSubtitle] = useState("");
   const [aboutContent, setAboutContent] = useState("");
@@ -47,6 +49,8 @@ export function SettingsEditor() {
 
       if (settings.heroTitle != null) setHeroTitle(settings.heroTitle);
       if (settings.heroSubtitle != null) setHeroSubtitle(settings.heroSubtitle);
+      if (settings.cardsHeading) setCardsHeading(settings.cardsHeading);
+      if (settings.cardsSubheading != null) setCardsSubheading(settings.cardsSubheading);
       if (settings.aboutTitle) setAboutTitle(settings.aboutTitle);
       if (settings.aboutSubtitle) setAboutSubtitle(settings.aboutSubtitle);
       if (settings.aboutContent) setAboutContent(settings.aboutContent);
@@ -90,7 +94,7 @@ export function SettingsEditor() {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ heroTitle, heroSubtitle, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
+        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
       });
       if (!res.ok) { toast.error("שמירה נכשלה"); return; }
       toast.success("ההגדרות נשמרו");
@@ -142,6 +146,21 @@ export function SettingsEditor() {
             <label className="text-sm font-medium text-sage-700 mb-1 block">תת-כותרת</label>
             <textarea value={heroSubtitle} onChange={(e) => setHeroSubtitle(e.target.value.slice(0, 150))} maxLength={150} rows={3} placeholder="תהליך של קילוף שכבות, חזרה פנימה..." className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-none" />
             <p className="text-[11px] text-sage-400 mt-1">{heroSubtitle.length}/150</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── כותרת כרטיסיות ── */}
+      <Card className="rounded-3xl">
+        <CardHeader><CardTitle>כותרת אזור הכרטיסיות</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">כותרת</label>
+            <Input value={cardsHeading} onChange={(e) => setCardsHeading(e.target.value)} placeholder="למה לתרגל איתנו" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">תת-כותרת</label>
+            <Input value={cardsSubheading} onChange={(e) => setCardsSubheading(e.target.value)} placeholder="חוויית יוגה מקצועית ואישית..." />
           </div>
         </CardContent>
       </Card>

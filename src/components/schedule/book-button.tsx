@@ -100,7 +100,7 @@ export function BookButton({ classInstanceId, action, label }: BookButtonProps) 
 
       router.refresh();
     } catch {
-      toast.error("משהו השתבש, נסי שוב");
+      toast.error("משהו השתבש, נסו שוב");
     } finally {
       setLoading(false);
     }

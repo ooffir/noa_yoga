@@ -286,7 +286,7 @@ export function ScheduleBuilder() {
           <CardContent className="py-16 text-center">
             <CalendarDays className="h-10 w-10 text-sage-200 mx-auto mb-4" />
             <p className="text-sage-500 text-lg font-medium">אין שיעורים בשבוע זה</p>
-            <p className="text-sage-400 text-sm mt-1">לחצי על ״שיעור חדש״ כדי להתחיל</p>
+            <p className="text-sage-400 text-sm mt-1">לחצו על ״שיעור חדש״ כדי להתחיל</p>
           </CardContent>
         </Card>
       ) : (
@@ -397,7 +397,7 @@ export function ScheduleBuilder() {
           <DialogHeader>
             <DialogTitle>יצירת שיעור חדש</DialogTitle>
             <DialogDescription>
-              בחרי תאריך, וסמני אם זה שיעור קבוע שבועי.
+              בחרו תאריך, וסמנו אם זה שיעור קבוע שבועי.
             </DialogDescription>
           </DialogHeader>
 

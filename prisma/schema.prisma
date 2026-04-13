@@ -298,6 +298,8 @@ model SiteSettings {
   id              String  @id @default("main")
   heroTitle       String  @default("") @map("hero_title")
   heroSubtitle    String  @default("") @map("hero_subtitle")
+  cardsHeading    String  @default("למה לתרגל איתנו") @map("cards_heading")
+  cardsSubheading String  @default("") @map("cards_subheading")
   aboutTitle      String  @default("נעים להכיר") @map("about_title")
   aboutSubtitle   String  @default("") @map("about_subtitle")
   aboutContent    String  @default("") @map("about_content")

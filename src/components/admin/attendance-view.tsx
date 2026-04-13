@@ -137,7 +137,7 @@ export function AttendanceView() {
         <CardContent>
           {!selectedClass ? (
             <p className="text-sage-400 text-sm text-center py-8">
-              בחרי שיעור כדי לראות את הנוכחות
+              בחרו שיעור כדי לראות את הנוכחות
             </p>
           ) : attendanceLoading ? (
             <div className="flex justify-center py-8">

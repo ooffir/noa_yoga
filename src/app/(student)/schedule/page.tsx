@@ -127,7 +127,7 @@ export default async function SchedulePage({ searchParams }: Props) {
         <div className="rounded-3xl border border-sage-100 bg-white p-14 text-center shadow-sm">
           <CalendarDays className="h-10 w-10 text-sage-200 mx-auto mb-4" />
           <p className="text-sage-500 text-lg font-medium">אין שיעורים מתוכננים לשבוע זה</p>
-          <p className="text-sage-400 text-sm mt-1">נסי לעבור לשבוע הבא</p>
+          <p className="text-sage-400 text-sm mt-1">נסו לעבור לשבוע הבא</p>
         </div>
       ) : (
         <div className="space-y-8">

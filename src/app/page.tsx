@@ -81,6 +81,8 @@ export default async function LandingPage() {
 
   const heroTitle = aboutSettings?.heroTitle || "יוגה היא התנסות ישירה.\nהמסע אל התודעה.";
   const heroSubtitle = aboutSettings?.heroSubtitle || "תהליך של קילוף שכבות, חזרה פנימה ויצירת מרחב שקט. היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.";
+  const cardsHeading = aboutSettings?.cardsHeading || "למה לתרגל איתנו";
+  const cardsSubheading = aboutSettings?.cardsSubheading || "חוויית יוגה מקצועית ואישית – כל שיעור בנוי בשבילך";
   const aboutTitle = aboutSettings?.aboutTitle || "נעים להכיר";
   const aboutSubtitle = aboutSettings?.aboutSubtitle || "דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם";
   const aboutContent = aboutSettings?.aboutContent || DEFAULT_ABOUT;
@@ -130,11 +132,6 @@ export default async function LandingPage() {
         <div className="absolute -bottom-32 -left-32 h-[32rem] w-[32rem] rounded-full bg-sand-200/20 blur-3xl" />
 
         <div className="relative mx-auto max-w-5xl px-5 py-24 text-center sm:py-36">
-          <div className="mb-10 inline-flex items-center gap-2 rounded-full border border-sage-200 bg-white/70 px-4 py-1.5 text-xs font-medium text-sage-600 backdrop-blur-sm">
-            <Heart className="h-3.5 w-3.5 text-brand-400" />
-            נשימה · תנועה · איזון
-          </div>
-
           <h1 className="mx-auto max-w-2xl text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
             {heroTitle.includes("\n") ? (
               <>
@@ -171,8 +168,8 @@ export default async function LandingPage() {
       {/* ── כרטיסי ערך ── */}
       <section className="mx-auto max-w-5xl px-5 py-20 sm:py-28">
         <div className="mb-16 text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-sage-900 sm:text-4xl">למה לתרגל איתנו</h2>
-          <p className="mt-4 text-sage-500 leading-relaxed">חוויית יוגה מקצועית ואישית – כל שיעור בנוי בשבילך</p>
+          <h2 className="text-3xl font-bold tracking-tight text-sage-900 sm:text-4xl">{cardsHeading}</h2>
+          {cardsSubheading && <p className="mt-4 text-sage-500 leading-relaxed">{cardsSubheading}</p>}
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -227,7 +224,7 @@ export default async function LandingPage() {
       {/* ── קריאה לפעולה ── */}
       <section className="mx-auto max-w-5xl px-5 pb-24">
         <div className="rounded-[2rem] bg-gradient-to-bl from-sage-600 to-sage-700 p-10 text-center text-white sm:p-14">
-          <h2 className="text-3xl font-bold sm:text-4xl">מוכנה להתחיל?</h2>
+          <h2 className="text-3xl font-bold sm:text-4xl">מוכנים להתחיל?</h2>
           <p className="mx-auto mt-4 max-w-md text-sage-200 leading-relaxed">
             הצטרפו עוד היום למרחב של נשימה, קשב ותנועה מודעת.
           </p>

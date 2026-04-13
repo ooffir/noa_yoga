@@ -40,6 +40,8 @@ export async function PUT(req: Request) {
       data: {
         heroTitle: body.heroTitle ?? "",
         heroSubtitle: body.heroSubtitle ?? "",
+        cardsHeading: body.cardsHeading ?? "למה לתרגל איתנו",
+        cardsSubheading: body.cardsSubheading ?? "",
         aboutTitle: body.aboutTitle || "נעים להכיר",
         aboutSubtitle: body.aboutSubtitle || "",
         aboutContent: body.aboutContent || "",
