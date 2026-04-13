@@ -1,57 +1,75 @@
 import { NextResponse } from "next/server";
 import { getDbUser } from "@/lib/get-db-user";
-import { stripe, PRICES } from "@/lib/stripe";
 import { db } from "@/lib/db";
+import { createPaymentLink } from "@/lib/payplus";
 
 export async function POST(req: Request) {
   try {
     const dbUser = await getDbUser();
     if (!dbUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "יש להתחבר תחילה" }, { status: 401 });
     }
 
     const { type } = await req.json();
-    const userId = dbUser.id;
 
     if (!["SINGLE_CLASS", "PUNCH_CARD"].includes(type)) {
-      return NextResponse.json({ error: "Invalid purchase type" }, { status: 400 });
+      return NextResponse.json({ error: "סוג רכישה לא תקין" }, { status: 400 });
     }
 
-    const priceId = type === "PUNCH_CARD" ? PRICES.PUNCH_CARD : PRICES.SINGLE_CLASS;
+    let creditPrice = 50;
+    let punchCardPrice = 350;
+
+    try {
+      const settings = await db.siteSettings.findUnique({
+        where: { id: "main" },
+        select: { creditPrice: true, punchCardPrice: true },
+      });
+      if (settings) {
+        creditPrice = settings.creditPrice;
+        punchCardPrice = settings.punchCardPrice;
+      }
+    } catch {}
+
+    const amount = type === "PUNCH_CARD" ? punchCardPrice : creditPrice;
+    const description = type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
 
     const payment = await db.payment.create({
       data: {
-        userId,
+        userId: dbUser.id,
         type,
-        amount: type === "PUNCH_CARD" ? 35000 : 5000, // placeholder amounts in agorot
+        amount: amount * 100,
         status: "PENDING",
       },
     });
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/payments/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`,
-      metadata: {
-        userId,
-        paymentId: payment.id,
-        type,
-      },
-      customer_email: dbUser.email,
+    const moreInfo = JSON.stringify({
+      userId: dbUser.id,
+      paymentId: payment.id,
+      type,
+    });
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+    const result = await createPaymentLink({
+      amount,
+      description,
+      customerEmail: dbUser.email,
+      customerName: dbUser.name || dbUser.email,
+      moreInfo,
+      successUrl: `${appUrl}/payments/success`,
+      failureUrl: `${appUrl}/pricing`,
     });
 
     await db.payment.update({
       where: { id: payment.id },
-      data: { stripeSessionId: checkoutSession.id },
+      data: { paymentPageUid: result.pageRequestUid },
     });
 
-    return NextResponse.json({ url: checkoutSession.url });
+    return NextResponse.json({ url: result.url });
   } catch (error: any) {
-    console.error("Checkout error:", error);
+    console.error("PayPlus checkout error:", error?.message || error);
     return NextResponse.json(
-      { error: "Failed to create checkout session" },
+      { error: "יצירת עמוד תשלום נכשלה" },
       { status: 500 }
     );
   }

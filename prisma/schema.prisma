@@ -254,11 +254,11 @@ model PunchCard {
 }
 
 model Payment {
-  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String         @map("user_id") @db.Uuid
-  stripeSessionId String?        @unique @map("stripe_session_id")
-  stripePaymentId String?        @map("stripe_payment_id")
-  amount          Int
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String         @map("user_id") @db.Uuid
+  paymentPageUid       String?        @unique @map("payment_page_uid")
+  payplusTransactionId String?        @map("payplus_transaction_id")
+  amount               Int
   currency        String         @default("ILS")
   type            payment_type
   status          payment_status @default(PENDING)
@@ -304,6 +304,8 @@ model SiteSettings {
   aboutSubtitle   String  @default("") @map("about_subtitle")
   aboutContent    String  @default("") @map("about_content")
   profileImageUrl String? @map("profile_image_url")
+  creditPrice     Int     @default(50) @map("credit_price")
+  punchCardPrice  Int     @default(350) @map("punch_card_price")
 
   @@map("site_settings")
 }

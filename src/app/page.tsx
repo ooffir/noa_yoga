@@ -1,9 +1,16 @@
 import Link from "next/link";
 import { Show, UserButton } from "@clerk/nextjs";
-import * as LucideIcons from "lucide-react";
+import {
+  Wind, Heart, ArrowLeft, Flower2, Sun, Leaf, Sparkles,
+  Star, Moon, Mountain, Waves, Eye, Hand,
+} from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import type { LucideIcon } from "lucide-react";
 
-const { Wind, Heart, ArrowLeft, Flower2 } = LucideIcons;
+const ICON_MAP: Record<string, LucideIcon> = {
+  Wind, Heart, Flower2, Sun, Leaf, Sparkles,
+  Star, Moon, Mountain, Waves, Eye, Hand,
+};
 
 const ICON_COLORS = [
   "bg-sage-50 text-sage-600",
@@ -15,8 +22,7 @@ const ICON_COLORS = [
 ];
 
 function getIcon(name: string) {
-  const Icon = (LucideIcons as any)[name];
-  return Icon || Heart;
+  return ICON_MAP[name] || Heart;
 }
 
 export const revalidate = 3600;

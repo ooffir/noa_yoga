@@ -1,71 +1,213 @@
 # Noa Yogis
 
-`Noa Yogis` is a Hebrew-first, RTL yoga booking application built with Next.js, Clerk, Prisma, and Supabase.
+A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, and Supabase. Features class scheduling, bookings with credits, workshops, an internal blog/magazine, and a fully dynamic admin-managed homepage.
 
-It includes:
-- public landing page
-- protected student schedule
-- bookings, waitlist, credits, and punch cards
-- admin dashboard for class scheduling and student credit management
-- Stripe checkout hooks for paid flows
-
-## Current Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| App | Next.js 16 + App Router + TypeScript |
-| Auth | Clerk |
-| DB | Supabase Postgres + Prisma |
-| UI | Tailwind CSS + Radix UI |
-| Icons | `lucide-react` |
-| Forms/Validation | Zod |
-| Payments | Stripe Checkout |
-| Email | Nodemailer |
+| Framework | Next.js 16.2.1 (App Router, Turbopack) + TypeScript |
+| Auth | Clerk v7 (Hebrew localization via `heIL`) |
+| Database | Supabase PostgreSQL + Prisma 5.22 |
+| Styling | Tailwind CSS 3.4 |
+| UI Components | Radix UI (Dialog, Slot) |
+| Icons | lucide-react (named imports only) |
+| Validation | Zod |
+| Payments | PayPlus (Israeli payment provider) |
+| Email | Nodemailer (implemented but using placeholder SMTP credentials) |
+| Webhooks | Svix (Clerk webhook verification) |
 
-## Main Routes
+## All Routes (41 total)
 
-### Public
+### Public (no auth required)
 
-- `/` — landing page
-- `/sign-in` — Clerk sign-in
-- `/sign-up` — Clerk sign-up
+| Route | Description |
+|-------|-------------|
+| `/` | Landing page (dynamic hero, feature cards, about me, social links) |
+| `/sign-in` | Clerk sign-in (catch-all) |
+| `/sign-up` | Clerk sign-up (catch-all) |
+| `/articles` | Magazine / blog listing |
+| `/articles/[slug]` | Individual article reader |
+| `/workshops` | Workshops listing with registration |
 
-### Student
+### Student (requires sign-in)
 
-- `/schedule` — מערכת שעות
-- `/profile` — אזור אישי
-- `/pricing` — רכישת קרדיטים / כרטיסיות
-- `/payments/success` — דף הצלחת תשלום
+| Route | Description |
+|-------|-------------|
+| `/schedule` | Weekly class schedule with booking |
+| `/profile` | Personal area — credits, booking history |
+| `/pricing` | Purchase credits or punch cards (dynamic prices from admin) |
+| `/payments/success` | Post-payment confirmation |
 
-### Admin
+### Admin (requires admin role)
 
-- `/admin` — לוח בקרה
-- `/admin/schedule` — ניהול שיעורים
-- `/admin/users` — ניהול תלמידות וקרדיטים
-- `/admin/attendance` — נוכחות
+| Route | Description |
+|-------|-------------|
+| `/admin` | Dashboard — stats, revenue, popular classes |
+| `/admin/schedule` | Create/edit/cancel classes (recurring + one-time) |
+| `/admin/users` | Manage students and credits |
+| `/admin/attendance` | Mark attendance per class |
+| `/admin/workshops` | Create/edit workshops |
+| `/admin/articles` | Create/edit blog articles with image upload |
+| `/admin/settings` | Edit homepage content, pricing, about me |
 
-## Required Environment Variables
+### API Routes (24 endpoints)
 
-Minimum local setup:
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/bookings` | Book a class (credits or punch card) |
+| `POST /api/bookings/[id]/cancel` | Cancel booking with refund logic |
+| `POST /api/workshops/register` | Register for a workshop |
+| `GET /api/schedule` | Public schedule data |
+| `GET /api/user/credits` | User credit balance |
+| `GET/POST /api/admin/schedule` | Admin class CRUD |
+| `GET/PUT/DELETE /api/admin/schedule/[id]` | Edit/deactivate class definition |
+| `PATCH /api/admin/instances/[id]` | Cancel individual class instance |
+| `GET/PATCH /api/admin/users` | List students / update credits |
+| `GET/POST /api/admin/articles` | Article CRUD |
+| `PUT/DELETE /api/admin/articles/[id]` | Edit/delete article |
+| `GET/POST /api/admin/workshops` | Workshop CRUD |
+| `PUT/DELETE /api/admin/workshops/[id]` | Edit/deactivate workshop |
+| `GET/PUT /api/admin/settings` | Site settings (hero, about, pricing) |
+| `GET/PUT /api/admin/feature-cards` | Homepage feature cards |
+| `POST /api/admin/upload` | Image upload (Supabase Storage or base64) |
+| `GET /api/admin/dashboard` | Dashboard statistics |
+| `POST /api/admin/students/[id]` | Admin add/remove student from class |
+| `GET/POST /api/admin/attendance/[instanceId]` | Attendance data + marking |
+| `POST /api/webhooks/clerk` | Clerk user sync webhook |
+| `POST /api/payments/checkout` | PayPlus payment page creation |
+| `POST /api/payments/webhook` | PayPlus payment webhook |
+| `GET /api/cron/generate-instances` | Auto-generate class instances |
+| `GET /api/cron/reminders` | Send reminder emails |
+
+## Database Models (13 total)
+
+| Model | Purpose |
+|-------|---------|
+| User | Students + admins (synced from Clerk via `clerkId`) |
+| ClassDefinition | Recurring/one-time class templates |
+| ClassInstance | Specific class on a specific date |
+| Booking | Student → ClassInstance registration |
+| WaitlistEntry | Waitlist with auto-promotion |
+| PunchCard | 10-class credit cards |
+| Payment | Stripe payment records |
+| Article | Internal blog posts with slug routing |
+| Workshop | Standalone paid events |
+| WorkshopRegistration | Workshop signups (separate from class credits) |
+| SiteSettings | Homepage content, pricing config |
+| FeatureCard | Dynamic homepage value cards |
+| Account/Session/VerificationToken | Legacy NextAuth tables (kept for schema compat) |
+
+## Admin Access
+
+Admin users are defined in `src/lib/admin.ts`:
+- `omer609994@gmail.com`
+- `noa6660011@gmail.com`
+
+New admin emails can be added to the `ADMIN_EMAILS` array. Users are auto-promoted to admin on first sign-in.
+
+## Booking Logic
+
+1. Check `user.credits` (admin-assigned direct credits)
+2. If 0, check active punch cards (FIFO — oldest first)
+3. If class is full, add to waitlist (auto-promoted when spot opens)
+4. If no credits at all, show "לתשלום והרשמה" link to `/pricing`
+5. Workshops bypass the credit system entirely — separate registration flow
+
+Cancellation refunds credit if cancelled 6+ hours before class (configurable via `CANCELLATION_HOURS_BEFORE`).
+
+## Dynamic Admin Settings
+
+The admin can configure from `/admin/settings`:
+- Hero title and subtitle
+- Feature cards heading and subtitle
+- Feature cards (up to 6, with icon selection)
+- About Me section (title, subtitle, bio text, profile image)
+- **Pricing**: single credit price and punch card price (reflected on `/pricing`)
+
+## Performance Optimizations
+
+### Caching
+
+| Page | Strategy |
+|------|----------|
+| Homepage `/` | ISR `revalidate = 3600` |
+| Schedule `/schedule` | ISR `revalidate = 60` + `unstable_cache` with tag `schedule` |
+| Articles `/articles` | ISR `revalidate = 60` |
+| Workshops `/workshops` | ISR `revalidate = 60` |
+| Pricing `/pricing` | ISR `revalidate = 60` |
+| Admin pages | `force-dynamic` with `<Suspense>` skeletons |
+
+### Auth
+
+- `auth()` — instant JWT decode (no network call)
+- User lookup by indexed `clerkId` column
+- `currentUser()` only called once on first sign-in
+- `React.cache()` deduplicates within a request
+- Navbar gets user data as props — zero independent DB calls
+
+### Bundle
+
+- Named imports only for lucide-react (no `import *`)
+- Unused Radix packages removed (7 packages)
+- `next.config.js`: `compress: true`, `poweredByHeader: false`
+- Static asset cache: `max-age=31536000, immutable`
+- Image cache: `minimumCacheTTL: 3600`
+
+### Database
+
+- Prisma singleton pattern
+- PgBouncer connection pooling (`connection_limit=5, pool_timeout=30`)
+- Indexes on `clerkId`, `email`, `date`, `status`, `role`, `slug`
+
+## PayPlus & Email Status
+
+**PayPlus**: The payment integration uses PayPlus (Israeli provider). It creates a payment page link, redirects the user, and processes the webhook callback to grant credits. To activate:
+1. Create a PayPlus account at https://www.payplus.co.il
+2. Set `PAYPLUS_API_KEY`, `PAYPLUS_SECRET_KEY`, and `PAYPLUS_PAGE_UID` in `.env`
+3. Set the webhook URL in PayPlus dashboard to: `https://yourdomain.com/api/payments/webhook`
+4. Prices are configured dynamically from Admin Settings (`/admin/settings`)
+
+**Nodemailer**: Email sending is implemented (booking confirmations, waitlist promotions, reminders). The SMTP credentials are placeholders. To activate:
+1. Set real SMTP credentials in `.env`
+2. Update `EMAIL_FROM` to the studio's email address
+
+## Environment Variables
 
 ```env
-DATABASE_URL=
-DIRECT_URL=
+# Database (Supabase)
+DATABASE_URL=postgresql://...?pgbouncer=true&connection_limit=5&pool_timeout=30
+DIRECT_URL=postgresql://...
 
+# Clerk
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
 CLERK_WEBHOOK_SECRET=
 
+# App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-STRIPE_SECRET_KEY=
-STRIPE_PUBLISHABLE_KEY=
-STRIPE_WEBHOOK_SECRET=
-STRIPE_SINGLE_CLASS_PRICE_ID=
-STRIPE_PUNCH_CARD_PRICE_ID=
+# PayPlus
+PAYPLUS_API_KEY=
+PAYPLUS_SECRET_KEY=
+PAYPLUS_PAGE_UID=
 
+# Email (SMTP)
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+EMAIL_FROM=
+
+# Optional: Supabase Storage
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Config
 CANCELLATION_HOURS_BEFORE=6
 PUNCH_CARD_CREDITS=10
+
+# Cron (for /api/cron/* endpoints)
+CRON_SECRET=
 ```
 
 ## Local Development
@@ -77,75 +219,21 @@ npx prisma db push
 npm run dev
 ```
 
-If you changed Prisma fields and see runtime errors such as `column does not exist`, run:
+If Turbopack cache gets corrupted:
 
 ```bash
-npx prisma db push
-npx prisma generate
+Remove-Item -Recurse -Force .next   # PowerShell
+rm -rf .next                         # macOS/Linux
+npm run dev
 ```
-
-## Database Notes
-
-Relevant recent fields:
-
-- `users.credits`
-- `class_definitions.is_recurring`
-- `class_instances.location`
-
-Helpful SQL files:
-
-- `prisma/add-is-recurring.sql`
-- `prisma/add-credits-and-location.sql`
-- `prisma/reset-and-create.sql` — destructive full reset
-
-## Auth Notes
-
-- Clerk is configured in `src/app/layout.tsx`
-- public auth pages live at:
-  - `src/app/sign-in/[[...sign-in]]/page.tsx`
-  - `src/app/sign-up/[[...sign-up]]/page.tsx`
-- protected routes are enforced in `src/proxy.ts`
-- admin user is hardcoded by email:
-  - `omer609994@gmail.com`
-
-## Booking Logic
-
-Current booking order:
-
-1. Use direct `user.credits` if available
-2. Otherwise use active punch card credits
-3. If class is full, add to waitlist
-4. If no credits exist, prompt the user to go to payment
-
-## Current Known Issues
-
-- Clerk server calls via `currentUser()` can still be a performance bottleneck on server-rendered pages. It is now guarded against crashes, but the ideal next step is to move more identity data into session claims / Clerk metadata and avoid extra round trips.
-- `prisma/seed.ts` still reflects an older local-password demo flow and should be updated or removed since the app now uses Clerk.
-- Pricing flow currently routes the user to `/pricing` when they have no credits. A tighter “pay and immediately reserve the exact class” flow still needs a dedicated Stripe single-class checkout + post-payment booking handoff.
-- The landing page and student header are stable, but the auth UI styling still relies mostly on Clerk defaults inside the sign-in/sign-up pages. If you want a fully branded auth experience, custom Clerk appearance config should be added.
-- Some older utility/API messages are still in English internally, even though the visible UI is mostly Hebrew.
-
-## Recommended Next Level-Up
-
-High-value improvements I’d prioritize next:
-
-1. Replace repeated `currentUser()` calls with a single session/claims-based user resolver.
-2. Add a real post-payment booking reservation flow so “pay & book” completes the booking automatically.
-3. Add automated tests for:
-   - booking with credits
-   - waitlist promotion
-   - cancellation refund behavior
-   - admin recurring class creation
-4. Move admin mutations to server actions or a typed mutation layer.
-5. Add Sentry/logging so production runtime errors are visible immediately.
-6. Refresh `prisma/seed.ts` and remove remaining legacy auth assumptions.
 
 ## Useful Commands
 
 ```bash
-npm run dev
-npm run build
-npx prisma generate
-npx prisma db push
-npx prisma studio
+npm run dev          # Start dev server
+npm run build        # Production build
+npm run lint         # ESLint
+npx prisma generate  # Regenerate Prisma client
+npx prisma db push   # Sync schema to database
+npx prisma studio    # Database browser
 ```

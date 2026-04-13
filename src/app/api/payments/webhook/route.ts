@@ -1,34 +1,48 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
-import { stripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
-import Stripe from "stripe";
+import { verifyWebhook } from "@/lib/payplus";
 
 export async function POST(req: Request) {
-  const body = await req.text();
-  const signature = (await headers()).get("Stripe-Signature")!;
-
-  let event: Stripe.Event;
-
   try {
-    event = stripe.webhooks.constructEvent(
-      body,
-      signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    );
-  } catch (error) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
-  }
+    const body = await req.json();
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as Stripe.Checkout.Session;
-    const { userId, paymentId, type } = session.metadata!;
+    if (!verifyWebhook(body)) {
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+    }
+
+    const data = body?.data || body;
+
+    if (data?.Status_code !== "000") {
+      return NextResponse.json({ received: true, status: "not_success" });
+    }
+
+    let moreInfo: { userId?: string; paymentId?: string; type?: string } = {};
+    try {
+      moreInfo =
+        typeof data.more_info === "string"
+          ? JSON.parse(data.more_info)
+          : data.more_info || {};
+    } catch {}
+
+    const { userId, paymentId, type } = moreInfo;
+
+    if (!userId || !paymentId || !type) {
+      return NextResponse.json({ error: "Missing payment metadata" }, { status: 400 });
+    }
+
+    const existingPayment = await db.payment.findUnique({
+      where: { id: paymentId },
+    });
+
+    if (!existingPayment || existingPayment.status === "COMPLETED") {
+      return NextResponse.json({ received: true, status: "already_processed" });
+    }
 
     await db.payment.update({
       where: { id: paymentId },
       data: {
         status: "COMPLETED",
-        stripePaymentId: session.payment_intent as string,
+        payplusTransactionId: data.transaction_uid || null,
       },
     });
 
@@ -42,7 +56,10 @@ export async function POST(req: Request) {
         paymentId,
       },
     });
-  }
 
-  return NextResponse.json({ received: true });
+    return NextResponse.json({ received: true, status: "completed" });
+  } catch (error: any) {
+    console.error("PayPlus webhook error:", error?.message || error);
+    return NextResponse.json({ error: "Webhook processing failed" }, { status: 500 });
+  }
 }

@@ -29,6 +29,8 @@ export function SettingsEditor() {
   const [heroSubtitle, setHeroSubtitle] = useState("");
   const [cardsHeading, setCardsHeading] = useState("למה לתרגל איתנו");
   const [cardsSubheading, setCardsSubheading] = useState("");
+  const [creditPrice, setCreditPrice] = useState(50);
+  const [punchCardPrice, setPunchCardPrice] = useState(350);
   const [aboutTitle, setAboutTitle] = useState("נעים להכיר");
   const [aboutSubtitle, setAboutSubtitle] = useState("");
   const [aboutContent, setAboutContent] = useState("");
@@ -51,6 +53,8 @@ export function SettingsEditor() {
       if (settings.heroSubtitle != null) setHeroSubtitle(settings.heroSubtitle);
       if (settings.cardsHeading) setCardsHeading(settings.cardsHeading);
       if (settings.cardsSubheading != null) setCardsSubheading(settings.cardsSubheading);
+      if (settings.creditPrice != null) setCreditPrice(settings.creditPrice);
+      if (settings.punchCardPrice != null) setPunchCardPrice(settings.punchCardPrice);
       if (settings.aboutTitle) setAboutTitle(settings.aboutTitle);
       if (settings.aboutSubtitle) setAboutSubtitle(settings.aboutSubtitle);
       if (settings.aboutContent) setAboutContent(settings.aboutContent);
@@ -94,7 +98,7 @@ export function SettingsEditor() {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
+        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCardPrice, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
       });
       if (!res.ok) { toast.error("שמירה נכשלה"); return; }
       toast.success("ההגדרות נשמרו");
@@ -161,6 +165,21 @@ export function SettingsEditor() {
           <div>
             <label className="text-sm font-medium text-sage-700 mb-1 block">תת-כותרת</label>
             <Input value={cardsSubheading} onChange={(e) => setCardsSubheading(e.target.value)} placeholder="חוויית יוגה מקצועית ואישית..." />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── מחירון ── */}
+      <Card className="rounded-3xl">
+        <CardHeader><CardTitle>מחירון</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר קרדיט בודד (₪)</label>
+            <Input type="number" min={0} value={creditPrice} onChange={(e) => setCreditPrice(parseInt(e.target.value) || 0)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר כרטיסייה (₪)</label>
+            <Input type="number" min={0} value={punchCardPrice} onChange={(e) => setPunchCardPrice(parseInt(e.target.value) || 0)} />
           </div>
         </CardContent>
       </Card>

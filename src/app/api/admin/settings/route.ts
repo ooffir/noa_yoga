@@ -46,10 +46,13 @@ export async function PUT(req: Request) {
         aboutSubtitle: body.aboutSubtitle || "",
         aboutContent: body.aboutContent || "",
         profileImageUrl: body.profileImageUrl || null,
+        creditPrice: body.creditPrice != null ? Number(body.creditPrice) : 50,
+        punchCardPrice: body.punchCardPrice != null ? Number(body.punchCardPrice) : 350,
       },
     });
 
     revalidatePath("/");
+    revalidatePath("/pricing");
     revalidatePath("/admin/settings");
     return NextResponse.json(settings);
   } catch {
