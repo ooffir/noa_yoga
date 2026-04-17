@@ -138,7 +138,11 @@ export default async function LandingPage() {
         <div className="absolute -bottom-32 -left-32 h-[32rem] w-[32rem] rounded-full bg-sand-200/20 blur-3xl" />
 
         <div className="relative mx-auto max-w-5xl px-5 py-24 text-center sm:py-36">
-          <h1 className="mx-auto max-w-2xl text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
+          <p className="mx-auto mb-8 max-w-lg text-lg leading-relaxed text-sage-500">
+            {heroSubtitle}
+          </p>
+
+          <h1 className="mx-auto max-w-4xl text-pretty text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
             {heroTitle.includes("\n") ? (
               <>
                 {heroTitle.split("\n")[0]}
@@ -148,10 +152,6 @@ export default async function LandingPage() {
               heroTitle
             )}
           </h1>
-
-          <p className="mx-auto mt-8 max-w-lg text-lg leading-relaxed text-sage-500">
-            {heroSubtitle}
-          </p>
 
           <div className="mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link

@@ -143,8 +143,8 @@ export function SettingsEditor() {
         <CardContent className="space-y-4">
           <div>
             <label className="text-sm font-medium text-sage-700 mb-1 block">כותרת ראשית</label>
-            <Input value={heroTitle} onChange={(e) => setHeroTitle(e.target.value.slice(0, 60))} maxLength={60} placeholder="יוגה היא התנסות ישירה. המסע אל התודעה." />
-            <p className="text-[11px] text-sage-400 mt-1">{heroTitle.length}/60</p>
+            <Input value={heroTitle} onChange={(e) => setHeroTitle(e.target.value.slice(0, 100))} maxLength={100} placeholder="יוגה היא התנסות ישירה. המסע אל התודעה." />
+            <p className="text-[11px] text-sage-400 mt-1">{heroTitle.length}/100</p>
           </div>
           <div>
             <label className="text-sm font-medium text-sage-700 mb-1 block">תת-כותרת</label>
