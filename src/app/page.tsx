@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Show, UserButton } from "@clerk/nextjs";
@@ -29,44 +28,10 @@ function getIcon(name: string) {
   return ICON_MAP[name] || Heart;
 }
 
-export const revalidate = 3600;
-
-const DEFAULT_HERO_TITLE = "יוגה היא התנסות ישירה.\nהמסע אל התודעה.";
-const DEFAULT_HERO_SUBTITLE = "תהליך של קילוף שכבות, חזרה פנימה ויצירת מרחב שקט. היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא יוצאת משם.";
-const DEFAULT_CARDS_HEADING = "למה לתרגל איתנו";
-const DEFAULT_CARDS_SUBHEADING = "חוויית יוגה מקצועית ואישית – כל שיעור בנוי בשבילך";
-const DEFAULT_ABOUT_TITLE = "נעים להכיר";
-const DEFAULT_ABOUT_SUBTITLE = "דרך של הקשבה, תרגול ונוכחות בתוך החיים עצמם";
-
-const DEFAULT_ABOUT = `נועה אופיר, בת 22
-חיפאית (Born and Raised)
-מורה מוסמכת ליוגה (500 שעות)
-ומאמינה ביוגה כדרך חיים-
-ככלי שמשרת אותנו בתוך היומיום,
-ועוזר לנו לבחור טוב יותר, עבור עצמנו.
-
-המסע שלי התחיל בסקרנות לעולמות המזרח.
-רצון להעמיק ולהבין- על מה כולם מדברים?
-
-הוא התחיל בהודו, עבר דרך מנזרי שתיקה,
-העמקה בעולם הבודהיזם ותרגול מדיטציה.
-המשיך באשראמים מסורתיים,
-נחשפתי לעומק של דרך היוגה.
-למדתי ממורים מיוחדים במינם,
-התנסיתי בהאטה יוגה קלאסית ועד לאשטנגה דינמית ומאתגרת.
-עם הזמן הבנתי- שהיוגה היא הדרך המדויקת ביותר עבורי אל עצמי.
-
-בשיעורים שלי אנחנו מתרגלים חוסן ומשמעת עצמית, אבל עם מקום לרכות, להתמסרות לתהליכים שאי אפשר לזרז.
-היוגה מתחילה במזרן, והקסם מתחיל לקרות כשהיא גם יוצאת משם.
-
-מזמינה אתכם להצטרף אליי לתרגל,
-יש מקום לכולם❤️`;
-
-const DEFAULT_CARDS = [
-  { title: "קילוף שכבות", description: "תהליך של חזרה פנימה ויצירת מרחב שקט בתוך התודעה. התנסות ישירה שמובילה לחיבור עמוק.", iconName: "Wind" },
-  { title: "הרמוניה ואיזון", description: "בעזרת העבודה עם הגוף, הדיוק שלו והנשימה, אנחנו מייצרים איזון שמשפיע על כל מציאות חיינו.", iconName: "Heart" },
-  { title: "אחריות אישית", description: "האחריות היא בידינו – על הגוף שלנו, על האופן שבו נגיב לחיים, ועל מה שנבחר להכניס למפתח ביתנו.", iconName: "Flower2" },
-];
+// Always render fresh content from the DB on every request.
+// Admin edits go live instantly — no build-time caching, no stale ISR snapshot.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function InstagramBrandIcon() {
   return (
@@ -91,189 +56,61 @@ function renderAboutContent(text: string) {
   return paragraphs.map((p, i) => <p key={i}>{p}</p>);
 }
 
-// ───── Async data components (stream in via Suspense) ─────
+// ───── Main page — synchronous server render, no hydration flash ─────
 
-async function HeroContent() {
-  if (TRACE) console.time("landing:hero.siteSettings");
-  let settings = null;
-  try {
-    settings = await prisma.siteSettings.findUnique({
-      where: { id: "main" },
-      select: { heroTitle: true, heroSubtitle: true },
-    });
-  } catch {}
-  if (TRACE) console.timeEnd("landing:hero.siteSettings");
+export default async function LandingPage() {
+  if (TRACE) console.time("landing:page-render");
 
-  const heroTitle = settings?.heroTitle || DEFAULT_HERO_TITLE;
-  const heroSubtitle = settings?.heroSubtitle || DEFAULT_HERO_SUBTITLE;
-
-  return (
-    <>
-      <p className="mx-auto mb-4 max-w-lg text-lg leading-relaxed text-sage-500">
-        {heroSubtitle}
-      </p>
-
-      <h1 className="mx-auto max-w-4xl text-pretty text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
-        {heroTitle.includes("\n") ? (
-          <>
-            {heroTitle.split("\n")[0]}
-            <span className="mt-2 block text-sage-600">{heroTitle.split("\n").slice(1).join(" ")}</span>
-          </>
-        ) : (
-          heroTitle
-        )}
-      </h1>
-    </>
-  );
-}
-
-function HeroFallback() {
-  return (
-    <>
-      <p className="mx-auto mb-4 max-w-lg text-lg leading-relaxed text-sage-500">
-        {DEFAULT_HERO_SUBTITLE}
-      </p>
-      <h1 className="mx-auto max-w-4xl text-pretty text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
-        {DEFAULT_HERO_TITLE.split("\n")[0]}
-        <span className="mt-2 block text-sage-600">{DEFAULT_HERO_TITLE.split("\n").slice(1).join(" ")}</span>
-      </h1>
-    </>
-  );
-}
-
-async function FeatureCardsSection() {
-  if (TRACE) console.time("landing:featureCards");
+  // Single parallel fetch — the server blocks until we have fresh DB values.
+  // The HTML sent to the browser already contains the correct content,
+  // so there is no "old text → new text" flash on hydration.
+  if (TRACE) console.time("landing:db");
+  let settings: {
+    heroTitle: string | null;
+    heroSubtitle: string | null;
+    cardsHeading: string | null;
+    cardsSubheading: string | null;
+    aboutTitle: string | null;
+    aboutSubtitle: string | null;
+    aboutContent: string | null;
+    profileImageUrl: string | null;
+  } | null = null;
   let cards: { title: string; description: string; iconName: string }[] = [];
-  let heading = DEFAULT_CARDS_HEADING;
-  let subheading = DEFAULT_CARDS_SUBHEADING;
 
   try {
-    const [settings, dbCards] = await Promise.all([
+    [settings, cards] = await Promise.all([
       prisma.siteSettings.findUnique({
         where: { id: "main" },
-        select: { cardsHeading: true, cardsSubheading: true },
+        select: {
+          heroTitle: true,
+          heroSubtitle: true,
+          cardsHeading: true,
+          cardsSubheading: true,
+          aboutTitle: true,
+          aboutSubtitle: true,
+          aboutContent: true,
+          profileImageUrl: true,
+        },
       }),
-      prisma.featureCard.findMany({ orderBy: { order: "asc" } }),
+      prisma.featureCard.findMany({
+        orderBy: { order: "asc" },
+        select: { title: true, description: true, iconName: true },
+      }),
     ]);
-    if (settings?.cardsHeading) heading = settings.cardsHeading;
-    if (settings?.cardsSubheading) subheading = settings.cardsSubheading;
-    cards = dbCards;
-  } catch {}
-  if (TRACE) console.timeEnd("landing:featureCards");
+  } catch (err) {
+    console.error("[landing] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
+  }
+  if (TRACE) console.timeEnd("landing:db");
 
-  const display = cards.length > 0 ? cards : DEFAULT_CARDS;
-
-  return (
-    <>
-      <div className="mb-16 text-center">
-        <h2 className="text-3xl font-bold tracking-tight text-sage-900 sm:text-4xl">{heading}</h2>
-        {subheading && <p className="mt-4 text-sage-500 leading-relaxed">{subheading}</p>}
-      </div>
-
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {display.map((card, idx) => {
-          const IconComponent = getIcon(card.iconName);
-          const color = ICON_COLORS[idx % ICON_COLORS.length];
-          return (
-            <div key={idx} className="rounded-3xl border border-sage-100 bg-white p-8 shadow-sm transition-shadow hover:shadow-md">
-              <div className={`mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl ${color}`}>
-                <IconComponent className="h-5 w-5" />
-              </div>
-              <h3 className="mb-2 text-lg font-bold text-sage-900">{card.title}</h3>
-              <p className="text-sm leading-relaxed text-sage-500">{card.description}</p>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-function FeatureCardsFallback() {
-  return (
-    <>
-      <div className="mb-16 text-center">
-        <div className="mx-auto h-9 w-64 animate-pulse rounded-xl bg-sage-100" />
-        <div className="mx-auto mt-4 h-4 w-80 animate-pulse rounded-lg bg-sage-50" />
-      </div>
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-56 animate-pulse rounded-3xl border border-sage-100 bg-white" />
-        ))}
-      </div>
-    </>
-  );
-}
-
-async function AboutSection() {
-  if (TRACE) console.time("landing:about");
-  let settings = null;
-  try {
-    settings = await prisma.siteSettings.findUnique({
-      where: { id: "main" },
-      select: { aboutTitle: true, aboutSubtitle: true, aboutContent: true, profileImageUrl: true },
-    });
-  } catch {}
-  if (TRACE) console.timeEnd("landing:about");
-
-  const aboutTitle = settings?.aboutTitle || DEFAULT_ABOUT_TITLE;
-  const aboutSubtitle = settings?.aboutSubtitle || DEFAULT_ABOUT_SUBTITLE;
-  const aboutContent = settings?.aboutContent || DEFAULT_ABOUT;
+  // Empty-string fallbacks — better a blank space for 200ms than stale hardcoded text.
+  const heroTitle = settings?.heroTitle || "";
+  const heroSubtitle = settings?.heroSubtitle || "";
+  const cardsHeading = settings?.cardsHeading || "";
+  const cardsSubheading = settings?.cardsSubheading || "";
+  const aboutTitle = settings?.aboutTitle || "";
+  const aboutSubtitle = settings?.aboutSubtitle || "";
+  const aboutContent = settings?.aboutContent || "";
   const profileImage = settings?.profileImageUrl || null;
-
-  return (
-    <div className="rounded-[2rem] border border-sage-100 bg-white p-8 shadow-sm sm:p-12">
-      <div className="mb-10 text-center">
-        <h2 className="text-3xl font-bold tracking-tight text-sage-900">{aboutTitle}</h2>
-        {aboutSubtitle && (
-          <p className="mt-3 text-sm leading-relaxed text-sage-500">{aboutSubtitle}</p>
-        )}
-      </div>
-
-      <div className="flex flex-col items-center gap-10 md:flex-row md:items-start">
-        {profileImage && (
-          <div className="shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={profileImage}
-              alt={aboutTitle}
-              className="h-48 w-48 rounded-3xl object-cover shadow-sm md:h-56 md:w-56"
-            />
-          </div>
-        )}
-
-        <div className="flex-1 space-y-1 text-right text-[15px] font-light leading-[2] text-sage-600">
-          {aboutContent.includes("<") ? (
-            <div dangerouslySetInnerHTML={{ __html: aboutContent }} />
-          ) : (
-            renderAboutContent(aboutContent)
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AboutFallback() {
-  return (
-    <div className="rounded-[2rem] border border-sage-100 bg-white p-8 shadow-sm sm:p-12">
-      <div className="mb-10 text-center">
-        <div className="mx-auto h-9 w-48 animate-pulse rounded-xl bg-sage-100" />
-        <div className="mx-auto mt-3 h-4 w-72 animate-pulse rounded-lg bg-sage-50" />
-      </div>
-      <div className="space-y-3">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="h-4 animate-pulse rounded bg-sage-50" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ───── Main page — instant shell, data streams in ─────
-
-export default function LandingPage() {
-  if (TRACE) console.time("landing:page-render");
 
   const page = (
     <div className="min-h-screen bg-sand-50">
@@ -320,9 +157,24 @@ export default function LandingPage() {
             />
           </div>
 
-          <Suspense fallback={<HeroFallback />}>
-            <HeroContent />
-          </Suspense>
+          {heroSubtitle && (
+            <p className="mx-auto mb-4 max-w-lg text-lg leading-relaxed text-sage-500">
+              {heroSubtitle}
+            </p>
+          )}
+
+          {heroTitle && (
+            <h1 className="mx-auto max-w-4xl text-pretty text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
+              {heroTitle.includes("\n") ? (
+                <>
+                  {heroTitle.split("\n")[0]}
+                  <span className="mt-2 block text-sage-600">{heroTitle.split("\n").slice(1).join(" ")}</span>
+                </>
+              ) : (
+                heroTitle
+              )}
+            </h1>
+          )}
 
           <div className="mt-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
@@ -343,18 +195,79 @@ export default function LandingPage() {
       </section>
 
       {/* ── כרטיסי ערך ── */}
-      <section className="mx-auto max-w-5xl px-5 py-20 sm:py-28">
-        <Suspense fallback={<FeatureCardsFallback />}>
-          <FeatureCardsSection />
-        </Suspense>
-      </section>
+      {(cardsHeading || cards.length > 0) && (
+        <section className="mx-auto max-w-5xl px-5 py-20 sm:py-28">
+          {(cardsHeading || cardsSubheading) && (
+            <div className="mb-16 text-center">
+              {cardsHeading && (
+                <h2 className="text-3xl font-bold tracking-tight text-sage-900 sm:text-4xl">{cardsHeading}</h2>
+              )}
+              {cardsSubheading && (
+                <p className="mt-4 text-sage-500 leading-relaxed">{cardsSubheading}</p>
+              )}
+            </div>
+          )}
+
+          {cards.length > 0 && (
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {cards.map((card, idx) => {
+                const IconComponent = getIcon(card.iconName);
+                const color = ICON_COLORS[idx % ICON_COLORS.length];
+                return (
+                  <div key={idx} className="rounded-3xl border border-sage-100 bg-white p-8 shadow-sm transition-shadow hover:shadow-md">
+                    <div className={`mb-5 inline-flex h-12 w-12 items-center justify-center rounded-2xl ${color}`}>
+                      <IconComponent className="h-5 w-5" />
+                    </div>
+                    <h3 className="mb-2 text-lg font-bold text-sage-900">{card.title}</h3>
+                    <p className="text-sm leading-relaxed text-sage-500">{card.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── נעים להכיר ── */}
-      <section className="mx-auto max-w-5xl px-5 pb-24">
-        <Suspense fallback={<AboutFallback />}>
-          <AboutSection />
-        </Suspense>
-      </section>
+      {(aboutTitle || aboutContent) && (
+        <section className="mx-auto max-w-5xl px-5 pb-24">
+          <div className="rounded-[2rem] border border-sage-100 bg-white p-8 shadow-sm sm:p-12">
+            {(aboutTitle || aboutSubtitle) && (
+              <div className="mb-10 text-center">
+                {aboutTitle && (
+                  <h2 className="text-3xl font-bold tracking-tight text-sage-900">{aboutTitle}</h2>
+                )}
+                {aboutSubtitle && (
+                  <p className="mt-3 text-sm leading-relaxed text-sage-500">{aboutSubtitle}</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-10 md:flex-row md:items-start">
+              {profileImage && (
+                <div className="shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={profileImage}
+                    alt={aboutTitle || "profile"}
+                    className="h-48 w-48 rounded-3xl object-cover shadow-sm md:h-56 md:w-56"
+                  />
+                </div>
+              )}
+
+              {aboutContent && (
+                <div className="flex-1 space-y-1 text-right text-[15px] font-light leading-[2] text-sage-600">
+                  {aboutContent.includes("<") ? (
+                    <div dangerouslySetInnerHTML={{ __html: aboutContent }} />
+                  ) : (
+                    renderAboutContent(aboutContent)
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── קריאה לפעולה ── */}
       <section className="mx-auto max-w-5xl px-5 pb-24">
