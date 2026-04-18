@@ -13,10 +13,13 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const decoded = decodeURIComponent(slug);
-  const article = await prisma.article.findUnique({
-    where: { slug: decoded },
-    select: { title: true },
-  });
+  let article: { title: string } | null = null;
+  try {
+    article = await prisma.article.findUnique({
+      where: { slug: decoded },
+      select: { title: true },
+    });
+  } catch {}
 
   if (!article) return { title: "כתבה לא נמצאה" };
 
@@ -29,7 +32,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ArticlePage({ params }: Props) {
   const { slug } = await params;
   const decoded = decodeURIComponent(slug);
-  const article = await prisma.article.findUnique({ where: { slug: decoded } });
+  let article = null;
+  try {
+    article = await prisma.article.findUnique({ where: { slug: decoded } });
+  } catch (err) {
+    console.error("[article] DB unreachable:", err instanceof Error ? err.message : err);
+  }
 
   if (!article) notFound();
 

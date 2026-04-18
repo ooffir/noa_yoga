@@ -5,10 +5,15 @@ import Link from "next/link";
 export const revalidate = 60;
 
 export default async function ArticlesPage() {
-  const articles = await prisma.article.findMany({
-    orderBy: { createdAt: "desc" },
-    select: { id: true, title: true, slug: true, imageUrl: true, createdAt: true },
-  });
+  let articles: { id: string; title: string; slug: string; imageUrl: string | null; createdAt: Date }[] = [];
+  try {
+    articles = await prisma.article.findMany({
+      orderBy: { createdAt: "desc" },
+      select: { id: true, title: true, slug: true, imageUrl: true, createdAt: true },
+    });
+  } catch (err) {
+    console.error("[articles] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">

@@ -6,12 +6,21 @@ import { WorkshopRegisterButton } from "@/components/workshops/register-button";
 
 export const revalidate = 60;
 
+type WorkshopRow = Awaited<ReturnType<typeof prisma.workshop.findMany>>[number] & {
+  _count: { registrations: number };
+};
+
 export default async function WorkshopsPage() {
-  const workshops = await prisma.workshop.findMany({
-    where: { isActive: true, date: { gte: new Date() } },
-    orderBy: { date: "asc" },
-    include: { _count: { select: { registrations: { where: { paymentStatus: { not: "CANCELLED" } } } } } },
-  });
+  let workshops: WorkshopRow[] = [];
+  try {
+    workshops = await prisma.workshop.findMany({
+      where: { isActive: true, date: { gte: new Date() } },
+      orderBy: { date: "asc" },
+      include: { _count: { select: { registrations: { where: { paymentStatus: { not: "CANCELLED" } } } } } },
+    });
+  } catch (err) {
+    console.error("[workshops] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
