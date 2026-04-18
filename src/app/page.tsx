@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Show, UserButton } from "@clerk/nextjs";
 import {
   Wind, Heart, ArrowLeft, Flower2, Sun, Leaf, Sparkles,
@@ -108,7 +109,7 @@ async function HeroContent() {
 
   return (
     <>
-      <p className="mx-auto mb-8 max-w-lg text-lg leading-relaxed text-sage-500">
+      <p className="mx-auto mb-4 max-w-lg text-lg leading-relaxed text-sage-500">
         {heroSubtitle}
       </p>
 
@@ -129,7 +130,7 @@ async function HeroContent() {
 function HeroFallback() {
   return (
     <>
-      <p className="mx-auto mb-8 max-w-lg text-lg leading-relaxed text-sage-500">
+      <p className="mx-auto mb-4 max-w-lg text-lg leading-relaxed text-sage-500">
         {DEFAULT_HERO_SUBTITLE}
       </p>
       <h1 className="mx-auto max-w-4xl text-pretty text-4xl font-bold leading-snug tracking-tight text-sage-900 sm:text-5xl md:text-6xl md:leading-[1.15]">
@@ -307,12 +308,23 @@ export default function LandingPage() {
         <div className="absolute -top-24 -right-24 h-[28rem] w-[28rem] rounded-full bg-sage-100/30 blur-3xl" />
         <div className="absolute -bottom-32 -left-32 h-[32rem] w-[32rem] rounded-full bg-sand-200/20 blur-3xl" />
 
-        <div className="relative mx-auto max-w-5xl px-5 py-24 text-center sm:py-36">
+        <div className="relative mx-auto max-w-5xl px-5 pt-2 pb-12 text-center sm:pt-4 sm:pb-16">
+          <div className="flex justify-center mb-2">
+            <Image
+              src="/yoga-pose.png"
+              alt="יוגה"
+              width={220}
+              height={260}
+              className="mix-blend-multiply"
+              priority
+            />
+          </div>
+
           <Suspense fallback={<HeroFallback />}>
             <HeroContent />
           </Suspense>
 
-          <div className="mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
+          <div className="mt-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link
               href="/schedule"
               className="group inline-flex items-center gap-2 rounded-3xl bg-sage-600 px-8 py-4 text-base font-semibold text-white shadow-lg shadow-sage-600/20 transition-all hover:bg-sage-700 hover:shadow-xl active:scale-[0.97]"
