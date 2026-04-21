@@ -1,16 +1,25 @@
 import { prisma } from "@/lib/prisma";
-import { Sparkles, CalendarDays, Clock } from "lucide-react";
+import { Sparkles, CalendarDays, Clock, CheckCircle2, XCircle, Clock3 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
 
-export const revalidate = 60;
+// Always read fresh payment state from the DB so the confirmation banner
+// reflects the webhook update immediately after redirect.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type WorkshopRow = Awaited<ReturnType<typeof prisma.workshop.findMany>>[number] & {
   _count: { registrations: number };
 };
 
-export default async function WorkshopsPage() {
+interface Props {
+  searchParams: Promise<{ success?: string; cancelled?: string; registration?: string }>;
+}
+
+export default async function WorkshopsPage({ searchParams }: Props) {
+  const sp = await searchParams;
+
   let workshops: WorkshopRow[] = [];
   try {
     workshops = await prisma.workshop.findMany({
@@ -22,8 +31,68 @@ export default async function WorkshopsPage() {
     console.error("[workshops] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
   }
 
+  // Resolve the post-payment banner — we look up the registration directly
+  // instead of trusting the `success=true` query string, so spoofed URLs
+  // can't show a false confirmation.
+  let banner: { kind: "success" | "pending" | "cancelled"; title: string } | null = null;
+  if (sp.registration) {
+    try {
+      const reg = await prisma.workshopRegistration.findUnique({
+        where: { id: sp.registration },
+        include: { workshop: { select: { title: true } } },
+      });
+      if (reg) {
+        if (reg.paymentStatus === "COMPLETED") {
+          banner = { kind: "success", title: reg.workshop.title };
+        } else if (reg.paymentStatus === "PENDING") {
+          banner = { kind: "pending", title: reg.workshop.title };
+        } else {
+          banner = { kind: "cancelled", title: reg.workshop.title };
+        }
+      }
+    } catch {}
+  } else if (sp.cancelled === "true") {
+    banner = { kind: "cancelled", title: "" };
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
+      {banner?.kind === "success" && (
+        <div className="mb-8 flex items-start gap-3 rounded-3xl border border-green-200 bg-green-50 p-5">
+          <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-green-600" />
+          <div>
+            <p className="font-bold text-green-900">ההרשמה הושלמה!</p>
+            <p className="mt-1 text-sm text-green-700">
+              התשלום על &quot;{banner.title}&quot; התקבל. נשלח אליכם מייל עם כל הפרטים.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {banner?.kind === "pending" && (
+        <div className="mb-8 flex items-start gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-5">
+          <Clock3 className="mt-0.5 h-6 w-6 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-bold text-amber-900">התשלום בעיבוד</p>
+            <p className="mt-1 text-sm text-amber-700">
+              הרישום ל&quot;{banner.title}&quot; יאושר ברגע שנקבל עדכון מחברת הסליקה. ניתן לרענן בעוד כמה שניות.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {banner?.kind === "cancelled" && (
+        <div className="mb-8 flex items-start gap-3 rounded-3xl border border-red-200 bg-red-50 p-5">
+          <XCircle className="mt-0.5 h-6 w-6 shrink-0 text-red-600" />
+          <div>
+            <p className="font-bold text-red-900">התשלום בוטל</p>
+            <p className="mt-1 text-sm text-red-700">
+              לא חויבתם. ניתן לנסות שוב מתי שתרצו.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="mb-10 text-center">
         <h1 className="text-3xl font-bold tracking-tight text-sage-900">סדנאות</h1>
         <p className="mt-3 text-sm leading-relaxed text-sage-500">

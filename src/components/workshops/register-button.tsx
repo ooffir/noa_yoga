@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loading";
 import toast from "react-hot-toast";
+import { generatePaymeSaleForWorkshop } from "@/actions/payme";
 
 interface Props {
   workshopId: string;
@@ -14,47 +15,30 @@ interface Props {
 export function WorkshopRegisterButton({ workshopId }: Props) {
   const { isSignedIn } = useUser();
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [registered, setRegistered] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [redirecting, setRedirecting] = useState(false);
 
-  const handleRegister = async () => {
+  const handleRegister = () => {
     if (!isSignedIn) {
       router.push("/sign-in");
       return;
     }
 
-    setLoading(true);
-    try {
-      const res = await fetch("/api/workshops/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workshopId }),
-      });
+    startTransition(async () => {
+      const result = await generatePaymeSaleForWorkshop(workshopId);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.error || "ההרשמה נכשלה");
+      if (!result.ok) {
+        toast.error(result.error);
         return;
       }
 
-      toast.success(data.message);
-      setRegistered(true);
-      router.refresh();
-    } catch {
-      toast.error("משהו השתבש, נסו שוב");
-    } finally {
-      setLoading(false);
-    }
+      toast.success("מעבירים לדף התשלום…");
+      setRedirecting(true);
+      window.location.href = result.url;
+    });
   };
 
-  if (registered) {
-    return (
-      <span className="rounded-2xl bg-sage-100 px-4 py-2 text-sm font-medium text-sage-700">
-        נרשמת בהצלחה ✓
-      </span>
-    );
-  }
+  const loading = pending || redirecting;
 
   return (
     <Button

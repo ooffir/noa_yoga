@@ -57,7 +57,7 @@ A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, a
 |----------|---------|
 | `POST /api/bookings` | Book a class (credits or punch card) |
 | `POST /api/bookings/[id]/cancel` | Cancel booking with refund logic |
-| `POST /api/workshops/register` | Register for a workshop |
+| — | Workshop registration is handled by the `generatePaymeSaleForWorkshop` server action (`src/actions/payme.ts`); the old `POST /api/workshops/register` route has been removed |
 | `GET /api/schedule` | Public schedule data |
 | `GET /api/user/credits` | User credit balance |
 | `GET/POST /api/admin/schedule` | Admin class CRUD |
@@ -75,8 +75,9 @@ A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, a
 | `POST /api/admin/students/[id]` | Admin add/remove student from class |
 | `GET/POST /api/admin/attendance/[instanceId]` | Attendance data + marking |
 | `POST /api/webhooks/clerk` | Clerk user sync webhook |
-| `POST /api/payments/checkout` | PayPlus payment page creation |
-| `POST /api/payments/webhook` | PayPlus payment webhook |
+| `POST /api/payments/checkout` | PayPlus payment page creation (credits / punch cards) |
+| `POST /api/payments/webhook` | PayPlus payment webhook (credits / punch cards) |
+| `POST /api/webhooks/payme` | PayMe IPN webhook — marks workshop registrations COMPLETED |
 | `GET /api/cron/generate-instances` | Auto-generate class instances |
 | `GET /api/cron/reminders` | Send reminder emails |
 
@@ -292,7 +293,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 | `src/app/api/schedule/route.ts` | `GET` | Public weekly class instances feed |
 | `src/app/api/bookings/route.ts` | `POST` | Book a class — validates credits/punch card, enforces capacity, adds to waitlist, sends confirmation email |
 | `src/app/api/bookings/[id]/cancel/route.ts` | `POST` | Cancel booking; refunds credit if ≥ `CANCELLATION_HOURS_BEFORE` hours before class; auto-promotes waitlist |
-| `src/app/api/workshops/register/route.ts` | `POST` | Register + pay for a workshop (bypasses class credits) |
+| `src/actions/payme.ts` | Server Action | `generatePaymeSaleForWorkshop()` — creates a PENDING `WorkshopRegistration` and returns a PayMe hosted-payment URL (replaces the old `/api/workshops/register` route) |
 | `src/app/api/user/credits/route.ts` | `GET` | Returns the signed-in user's credit balance (used by navbar badge) |
 
 ### API routes — admin
@@ -320,6 +321,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 |------|---------|--------|
 | `src/app/api/payments/checkout/route.ts` | `POST` | Creates a PayPlus payment page for a credit or punch-card purchase; creates `Payment(PENDING)` |
 | `src/app/api/payments/webhook/route.ts` | `POST` | PayPlus callback — verifies signature, marks `Payment(COMPLETED)`, credits user or creates `PunchCard` |
+| `src/app/api/webhooks/payme/route.ts` | `POST` | PayMe IPN callback — reads `custom_1` (registrationId), flips `WorkshopRegistration` to `COMPLETED`/`CANCELLED`, revalidates `/workshops` |
 | `src/app/api/webhooks/clerk/route.ts` | `POST` | Svix-verified Clerk webhook — syncs `user.created`/`updated` to DB, assigns `ADMIN` role by email |
 
 ### API routes — cron
