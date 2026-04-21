@@ -83,11 +83,12 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
   const salePriceAgurot = Math.round(input.amountIls * 100);
 
   // Detect which PayMe environment we're hitting (helps diagnose seller-id mismatch).
-  // payme.io and paymeservice.com are the same company — both domains point at the same API.
-  // - Preprod (sandbox): preprod.payme.io / preprod.paymeservice.com
-  // - Production:        ng.payme.io      / ng.paymeservice.com
-  const isPreprod = /preprod\./i.test(apiUrl);
-  const envLabel = isPreprod ? "PREPROD" : "PRODUCTION";
+  // Verified base URLs from payme.stoplight.io Direct API dashboard:
+  //   Staging:    https://sandbox.payme.io/api/
+  //   Production: https://live.payme.io/api/
+  const isSandbox = /sandbox\./i.test(apiUrl);
+  const isProduction = /live\./i.test(apiUrl);
+  const envLabel = isSandbox ? "SANDBOX" : isProduction ? "PRODUCTION" : "UNKNOWN";
 
   // PayMe /api/generate-sale required fields:
   //   seller_payme_id, sale_price (in agurot), currency, product_name
