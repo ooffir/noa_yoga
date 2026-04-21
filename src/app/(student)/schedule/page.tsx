@@ -82,8 +82,16 @@ export default async function SchedulePage({ searchParams }: Props) {
   const bookedSet = new Set(userBookings.map((b) => b.classInstanceId));
   const waitlistSet = new Set(userWaitlist.map((w) => w.classInstanceId));
 
-  const grouped: Record<string, typeof instances> = {};
-  for (const inst of instances) {
+  // `unstable_cache` JSON-serializes its result, so dates come back as
+  // ISO strings even though TS types them as Date. Normalize once here
+  // so every downstream .toISOString() / format() call is safe.
+  const normalizedInstances = instances.map((inst) => ({
+    ...inst,
+    date: new Date(inst.date),
+  }));
+
+  const grouped: Record<string, typeof normalizedInstances> = {};
+  for (const inst of normalizedInstances) {
     const key = format(inst.date, "yyyy-MM-dd");
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push(inst);
