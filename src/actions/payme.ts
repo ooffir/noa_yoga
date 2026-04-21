@@ -82,18 +82,20 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
   // PayMe expects the price in agurot (ILS cents).
   const salePriceAgurot = Math.round(input.amountIls * 100);
 
-  const body = {
-    seller_uid: sellerUid,
+  // PayMe /api/generate-sale required fields:
+  //   seller_payme_id, sale_price (in agurot), currency, product_name
+  // Docs: https://developers.paymeservice.com/
+  const body: Record<string, unknown> = {
+    seller_payme_id: sellerUid,
     sale_price: salePriceAgurot,
     currency: "ILS",
     product_name: input.productName,
     sale_return_url: `${siteUrl}${input.returnPath}`,
     sale_callback_url: `${siteUrl}/api/webhooks/payme`,
     sale_back_url: `${siteUrl}${input.cancelPath}`,
-    sale_customer_fields: {
-      email: input.userEmail ?? undefined,
-      name: input.userName ?? undefined,
-    },
+    // Buyer info at top-level (PayMe uses snake_case `buyer_*`).
+    ...(input.userEmail ? { buyer_email: input.userEmail } : {}),
+    ...(input.userName ? { buyer_name: input.userName } : {}),
     custom_1: input.customRef,
     custom_2: input.userId,
     custom_3: input.extraCustom,
