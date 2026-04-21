@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Check, Clock3, XCircle } from "lucide-react";
+import { Check, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
 import { getDbUser } from "@/lib/get-db-user";
 import { BookingEngine } from "@/lib/booking-engine";
@@ -11,6 +11,7 @@ import {
   isPaymeSuccess,
   isPaymeFailure,
 } from "@/lib/payments";
+import { PendingPoller } from "@/components/payments/pending-poller";
 
 // Always read live state so the banner reflects the latest DB status.
 export const dynamic = "force-dynamic";
@@ -133,21 +134,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
             </>
           )}
 
-          {status === "PENDING" && (
-            <>
-              <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center">
-                <Clock3 className="h-8 w-8 text-amber-600" />
-              </div>
-              <h1 className="text-2xl font-bold text-sage-900 mb-2">
-                התשלום בעיבוד
-              </h1>
-              <p className="text-sage-500 mb-6">
-                אנחנו ממתינים לאישור מחברת הסליקה. הדף יתעדכן אוטומטית בעוד כמה שניות.
-              </p>
-              {/* eslint-disable-next-line @next/next/no-head-element */}
-              <meta httpEquiv="refresh" content="3" />
-            </>
-          )}
+          {status === "PENDING" && <PendingPoller />}
 
           {(status === "FAILED" || status === "UNKNOWN") && (
             <>

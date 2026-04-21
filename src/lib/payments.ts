@@ -66,10 +66,12 @@ export async function completePaymentSuccess(
   ]);
 
   // Revalidate surfaces that show credit balance.
+  // NOTE: do NOT revalidate /payments/success — that page already has
+  // `dynamic = "force-dynamic"` and revalidating it on every call was
+  // adding pointless cache churn.
   try {
     revalidatePath("/profile");
     revalidatePath("/schedule");
-    revalidatePath("/payments/success");
   } catch {}
 
   console.log("[payments] completePaymentSuccess OK:", paymentId, `+${credits} credits`);
