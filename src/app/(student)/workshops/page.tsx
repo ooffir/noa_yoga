@@ -3,6 +3,12 @@ import { Sparkles, CalendarDays, Clock, CheckCircle2, XCircle, Clock3 } from "lu
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
+import {
+  completeWorkshopSuccess,
+  cancelWorkshop,
+  isPaymeSuccess,
+  isPaymeFailure,
+} from "@/lib/payments";
 
 // Always read fresh payment state from the DB so the confirmation banner
 // reflects the webhook update immediately after redirect.
@@ -14,11 +20,33 @@ type WorkshopRow = Awaited<ReturnType<typeof prisma.workshop.findMany>>[number] 
 };
 
 interface Props {
-  searchParams: Promise<{ success?: string; cancelled?: string; registration?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }
 
 export default async function WorkshopsPage({ searchParams }: Props) {
   const sp = await searchParams;
+
+  // ─── Self-healing: if PayMe redirected back with a registration id AND
+  // signals success/failure, reconcile the DB here so the user always sees
+  // the correct banner on first render (no webhook race).
+  if (sp.registration) {
+    try {
+      if (isPaymeSuccess({
+        payme_status: sp.payme_status,
+        status: sp.status,
+        status_code: sp.status_code,
+      })) {
+        await completeWorkshopSuccess(sp.registration);
+      } else if (
+        sp.cancelled === "true" ||
+        isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
+      ) {
+        await cancelWorkshop(sp.registration);
+      }
+    } catch (err) {
+      console.error("[workshops] self-heal error:", err);
+    }
+  }
 
   let workshops: WorkshopRow[] = [];
   try {

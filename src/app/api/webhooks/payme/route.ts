@@ -1,19 +1,24 @@
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import {
+  completePaymentSuccess,
+  completeWorkshopSuccess,
+  failPayment,
+  cancelWorkshop,
+  resolveCustomRef,
+  isPaymeSuccess,
+  isPaymeFailure,
+} from "@/lib/payments";
 
 /**
  * PayMe IPN (Instant Payment Notification) webhook.
  *
  * Dispatches on the `custom_1` prefix we set in generate-sale:
- *   - "wsr:<id>"  → WorkshopRegistration
- *   - "pay:<id>"  → Payment (credit / punch-card purchase)
+ *   - "wsr:<id>" → WorkshopRegistration
+ *   - "pay:<id>" → Payment (credit / punch-card purchase)
  *
- * Legacy (pre-prefix) workshop payloads fall back to WorkshopRegistration
- * lookup so in-flight sales aren't lost during the cutover.
- *
- * Security: for production, add signature verification via PayMe's
- * `verify-sale` API (https://developers.paymeservice.com/).
+ * Business logic lives in `src/lib/payments.ts` so the /payments/success
+ * return-URL page can use the same idempotent completion helpers if the
+ * webhook is delayed or missing.
  */
 
 export const dynamic = "force-dynamic";
@@ -48,144 +53,60 @@ async function parseBody(req: Request): Promise<PaymePayload> {
   }
 }
 
-type SaleKind = "workshop" | "payment";
-interface ResolvedCustom {
-  kind: SaleKind;
-  id: string;
-}
-
-function resolveCustomRef(custom1: string): ResolvedCustom | null {
-  if (custom1.startsWith("wsr:")) {
-    return { kind: "workshop", id: custom1.slice(4) };
-  }
-  if (custom1.startsWith("pay:")) {
-    return { kind: "payment", id: custom1.slice(4) };
-  }
-  // Legacy: raw UUID (old workshop registrations before prefix migration).
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(custom1)) {
-    return { kind: "workshop", id: custom1 };
-  }
-  return null;
-}
-
-async function handleWorkshopRegistration(id: string, isSuccess: boolean, isFailure: boolean) {
-  const registration = await db.workshopRegistration.findUnique({
-    where: { id },
-    include: { workshop: { select: { title: true } } },
-  });
-  if (!registration) {
-    console.warn("[payme-webhook] workshop registration not found:", id);
-    return;
-  }
-
-  if (isSuccess && registration.paymentStatus !== "COMPLETED") {
-    await db.workshopRegistration.update({
-      where: { id: registration.id },
-      data: { paymentStatus: "COMPLETED" },
-    });
-    console.log("[payme-webhook] workshop COMPLETED:", registration.id);
-  } else if (isFailure && registration.paymentStatus === "PENDING") {
-    await db.workshopRegistration.update({
-      where: { id: registration.id },
-      data: { paymentStatus: "CANCELLED" },
-    });
-    console.log("[payme-webhook] workshop CANCELLED:", registration.id);
-  }
-}
-
-async function handlePayment(
-  id: string,
-  paymeSaleCode: string | undefined,
-  isSuccess: boolean,
-  isFailure: boolean,
-) {
-  const payment = await db.payment.findUnique({ where: { id } });
-  if (!payment) {
-    console.warn("[payme-webhook] payment not found:", id);
-    return;
-  }
-
-  if (isSuccess) {
-    if (payment.status === "COMPLETED") {
-      console.log("[payme-webhook] payment already COMPLETED (idempotent):", payment.id);
-      return;
-    }
-
-    // Atomic-ish: flip the payment AND grant the credits in a single transaction.
-    const credits = payment.type === "PUNCH_CARD" ? 10 : 1;
-    await db.$transaction([
-      db.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: "COMPLETED",
-          paymentPageUid: paymeSaleCode ?? payment.paymentPageUid,
-        },
-      }),
-      db.punchCard.create({
-        data: {
-          userId: payment.userId,
-          totalCredits: credits,
-          remainingCredits: credits,
-          paymentId: payment.id,
-        },
-      }),
-    ]);
-
-    console.log("[payme-webhook] payment COMPLETED:", payment.id, `+${credits} credits`);
-  } else if (isFailure && payment.status === "PENDING") {
-    await db.payment.update({
-      where: { id: payment.id },
-      data: { status: "FAILED" },
-    });
-    console.log("[payme-webhook] payment FAILED:", payment.id);
-  }
-}
-
 export async function POST(req: Request) {
   const payload = await parseBody(req);
 
-  const status = (payload.payme_status || payload.status || "").toLowerCase();
-  const custom1 = payload.custom_1 || payload.customId1 || "";
-  const paymeSaleCode = payload.payme_sale_code || payload.sale_code;
-
+  // Log EVERY webhook call with full payload (masked sensitive data would be
+  // ideal, but PayMe doesn't send raw card data — only the sale code). This
+  // is crucial for diagnosing "payment succeeded but no credits" reports.
   console.log("[payme-webhook] received:", {
-    status,
-    custom1,
-    paymeSaleCode,
-    keys: Object.keys(payload),
+    fields: Object.keys(payload),
+    custom_1: payload.custom_1,
+    payme_status: payload.payme_status,
+    status: payload.status,
+    status_code: payload.status_code,
+    payme_sale_code: payload.payme_sale_code,
+    sale_code: payload.sale_code,
   });
 
-  if (!custom1) {
-    return NextResponse.json(
-      { error: "custom_1 missing" },
-      { status: 400 },
-    );
-  }
-
+  const custom1 = payload.custom_1 || payload.customId1 || payload["custom.1"];
   const resolved = resolveCustomRef(custom1);
+
   if (!resolved) {
-    console.warn("[payme-webhook] unrecognized custom_1 format:", custom1);
-    return NextResponse.json({ ok: true, note: "unrecognized ref" });
+    console.warn("[payme-webhook] unrecognized custom_1:", custom1);
+    // Still 200 so PayMe doesn't retry forever.
+    return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
   }
 
-  const isSuccess =
-    status === "success" ||
-    payload.status_code === "0" ||
-    payload.payme_status === "1";
-  const isFailure =
-    status === "failed" || status === "cancelled" || status === "error";
+  const success = isPaymeSuccess(payload);
+  const failure = isPaymeFailure(payload);
+  const paymeSaleCode = payload.payme_sale_code || payload.sale_code;
+
+  console.log("[payme-webhook] dispatching:", {
+    kind: resolved.kind,
+    id: resolved.id,
+    success,
+    failure,
+  });
 
   try {
     if (resolved.kind === "workshop") {
-      await handleWorkshopRegistration(resolved.id, isSuccess, isFailure);
-      revalidatePath("/workshops");
+      if (success) {
+        await completeWorkshopSuccess(resolved.id);
+      } else if (failure) {
+        await cancelWorkshop(resolved.id);
+      }
     } else {
-      await handlePayment(resolved.id, paymeSaleCode, isSuccess, isFailure);
-      revalidatePath("/profile");
+      if (success) {
+        await completePaymentSuccess(resolved.id, paymeSaleCode);
+      } else if (failure) {
+        await failPayment(resolved.id);
+      }
     }
   } catch (err) {
     console.error("[payme-webhook] handler error:", err);
-    // Still 200 so PayMe doesn't retry forever — we've logged server-side.
+    // Still 200 — PayMe doesn't need to retry. We'll catch the missed
+    // completion on the /payments/success or /workshops return page.
     return NextResponse.json({ ok: true, note: "handler error (logged)" });
   }
 
@@ -194,5 +115,5 @@ export async function POST(req: Request) {
 
 // Some PayMe setups probe the URL with GET first — respond OK.
 export async function GET() {
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, service: "payme-webhook" });
 }

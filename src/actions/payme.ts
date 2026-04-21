@@ -252,8 +252,15 @@ export async function generatePaymeSaleForWorkshop(
 
 export type CreditPurchaseType = "SINGLE_CLASS" | "PUNCH_CARD";
 
+/**
+ * @param type         SINGLE_CLASS (1 credit) or PUNCH_CARD (10 credits)
+ * @param bookClassInstanceId  optional — if provided, after successful
+ *                             payment the user will be auto-booked into
+ *                             this class instance on /payments/success
+ */
 export async function generatePaymeSaleForCredits(
   type: CreditPurchaseType,
+  bookClassInstanceId?: string,
 ): Promise<PaymeSaleResult> {
   if (type !== "SINGLE_CLASS" && type !== "PUNCH_CARD") {
     return { ok: false, error: "סוג רכישה לא תקין" };
@@ -295,6 +302,12 @@ export async function generatePaymeSaleForCredits(
     },
   });
 
+  // Append optional auto-book class id so /payments/success can register
+  // the user into the class after payment completes.
+  const returnPath = bookClassInstanceId
+    ? `/payments/success?payment=${payment.id}&book=${bookClassInstanceId}`
+    : `/payments/success?payment=${payment.id}`;
+
   return callGenerateSale({
     amountIls,
     productName,
@@ -303,7 +316,7 @@ export async function generatePaymeSaleForCredits(
     extraCustom: type,
     userEmail: user.email,
     userName: user.name,
-    returnPath: `/payments/success?payment=${payment.id}`,
+    returnPath,
     cancelPath: "/pricing?cancelled=true",
   });
 }

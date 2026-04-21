@@ -5,13 +5,19 @@ import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loading";
-import { CalendarPlus, ShoppingCart } from "lucide-react";
-import Link from "next/link";
+import { CalendarPlus } from "lucide-react";
+import { BookChoiceDialog } from "@/components/schedule/book-choice-dialog";
+import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog";
 
 interface BookButtonProps {
   classInstanceId: string;
   action: "book" | "waitlist" | "cancel";
   label: string;
+  classTitle?: string;
+  classDate?: string | Date;
+  classStartTime?: string;
+  creditPrice?: number;
+  punchCardPrice?: number;
 }
 
 function buildGoogleCalendarUrl(event: {
@@ -34,19 +40,28 @@ function buildGoogleCalendarUrl(event: {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-export function BookButton({ classInstanceId, action, label }: BookButtonProps) {
+export function BookButton({
+  classInstanceId,
+  action,
+  label,
+  classTitle,
+  classDate,
+  classStartTime,
+  creditPrice = 50,
+  punchCardPrice = 350,
+}: BookButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [calendarUrl, setCalendarUrl] = useState<string | null>(null);
-  const [noCredits, setNoCredits] = useState(false);
+  const [choiceOpen, setChoiceOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelBookingId, setCancelBookingId] = useState<string | null>(null);
 
   const handleClick = async () => {
-    setLoading(true);
-    setCalendarUrl(null);
-    setNoCredits(false);
-
-    try {
-      if (action === "cancel") {
+    // Cancel flow — fetch booking id, then open dialog instead of cancelling immediately.
+    if (action === "cancel") {
+      setLoading(true);
+      try {
         const bookingsRes = await fetch("/api/bookings?type=upcoming");
         const bookings = await bookingsRes.json();
         const booking = Array.isArray(bookings)
@@ -57,44 +72,45 @@ export function BookButton({ classInstanceId, action, label }: BookButtonProps) 
 
         if (!booking) {
           toast.error("ההזמנה לא נמצאה");
-          setLoading(false);
           return;
         }
+        setCancelBookingId(booking.id);
+        setCancelDialogOpen(true);
+      } catch {
+        toast.error("טעינת ההזמנה נכשלה");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
-        const res = await fetch(`/api/bookings/${booking.id}/cancel`, { method: "POST" });
-        const data = await res.json();
+    // Book / waitlist flow
+    setLoading(true);
+    setCalendarUrl(null);
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ classInstanceId }),
+      });
 
-        if (!res.ok) {
-          toast.error(data.error || "הביטול נכשל");
-          return;
-        }
+      const data = await res.json();
 
-        toast.success(data.refunded ? "ההזמנה בוטלה, הקרדיט הוחזר" : "ההזמנה בוטלה (ללא החזר)");
-      } else {
-        const res = await fetch("/api/bookings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ classInstanceId }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          if (data.error?.includes("יתרת שיעורים")) {
-            setNoCredits(true);
-          } else {
-            toast.error(data.error || "הפעולה נכשלה");
-          }
-          return;
-        }
-
-        if (data.type === "waitlist") {
-          toast.success("נוספת לרשימת ההמתנה!");
+      if (!res.ok) {
+        if (data.error?.includes("יתרת שיעורים")) {
+          setChoiceOpen(true);
         } else {
-          toast.success("ההרשמה אושרה!");
-          if (data.calendarEvent) {
-            setCalendarUrl(buildGoogleCalendarUrl(data.calendarEvent));
-          }
+          toast.error(data.error || "הפעולה נכשלה");
+        }
+        return;
+      }
+
+      if (data.type === "waitlist") {
+        toast.success("נוספת לרשימת ההמתנה!");
+      } else {
+        toast.success("ההרשמה אושרה!");
+        if (data.calendarEvent) {
+          setCalendarUrl(buildGoogleCalendarUrl(data.calendarEvent));
         }
       }
 
@@ -120,36 +136,46 @@ export function BookButton({ classInstanceId, action, label }: BookButtonProps) 
     );
   }
 
-  if (noCredits) {
-    return (
-      <div className="flex flex-col items-end gap-1.5">
-        <p className="text-[11px] text-red-500 font-medium">אין יתרת שיעורים</p>
-        <Link
-          href="/pricing"
-          className="inline-flex items-center gap-1.5 rounded-2xl bg-sage-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sage-700 transition-colors"
-        >
-          <ShoppingCart className="h-3 w-3" />
-          לתשלום והרשמה
-        </Link>
-      </div>
-    );
-  }
-
   const variant = action === "cancel" ? "ghost" : action === "book" ? "default" : "outline";
 
   return (
-    <Button
-      size="sm"
-      variant={variant}
-      onClick={handleClick}
-      disabled={loading}
-      className={
-        action === "cancel"
-          ? "text-red-500 hover:text-red-600 hover:bg-red-50 text-xs"
-          : "min-w-[80px] text-xs"
-      }
-    >
-      {loading ? <Spinner className="h-4 w-4" /> : label}
-    </Button>
+    <>
+      <Button
+        size="sm"
+        variant={variant}
+        onClick={handleClick}
+        disabled={loading}
+        className={
+          action === "cancel"
+            ? "text-red-500 hover:text-red-600 hover:bg-red-50 text-xs"
+            : "min-w-[80px] text-xs"
+        }
+      >
+        {loading ? <Spinner className="h-4 w-4" /> : label}
+      </Button>
+
+      <BookChoiceDialog
+        open={choiceOpen}
+        onOpenChange={setChoiceOpen}
+        classInstanceId={classInstanceId}
+        classTitle={classTitle}
+        creditPrice={creditPrice}
+        punchCardPrice={punchCardPrice}
+      />
+
+      {cancelBookingId && classDate && classStartTime && (
+        <CancelBookingDialog
+          open={cancelDialogOpen}
+          onOpenChange={(o) => {
+            setCancelDialogOpen(o);
+            if (!o) setCancelBookingId(null);
+          }}
+          bookingId={cancelBookingId}
+          classTitle={classTitle || "השיעור"}
+          classDate={classDate}
+          classStartTime={classStartTime}
+        />
+      )}
+    </>
   );
 }

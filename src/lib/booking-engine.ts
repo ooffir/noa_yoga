@@ -1,8 +1,43 @@
 import { db } from "@/lib/db";
+import { sendEmail, waitlistPromotionEmail } from "@/lib/email";
+import { format } from "date-fns";
+import { he } from "date-fns/locale";
 
 const BookingStatus = { CONFIRMED: "CONFIRMED", CANCELLED: "CANCELLED", NO_SHOW: "NO_SHOW" } as const;
 const WaitlistStatus = { WAITING: "WAITING", PROMOTED: "PROMOTED", EXPIRED: "EXPIRED", CANCELLED: "CANCELLED" } as const;
 const PunchCardStatus = { ACTIVE: "ACTIVE", EXHAUSTED: "EXHAUSTED", EXPIRED: "EXPIRED" } as const;
+
+interface PromotedUserInfo {
+  email: string;
+  name: string | null;
+  className: string;
+  classDate: Date;
+  startTime: string;
+}
+
+/**
+ * Fire-and-forget email dispatch after a transaction commits.
+ * Failures are logged but don't propagate — the booking itself has
+ * already been finalized in the DB.
+ */
+function dispatchPromotionEmail(info: PromotedUserInfo | null) {
+  if (!info) return;
+  try {
+    const dateStr = format(info.classDate, "EEEE, d בMMMM yyyy", { locale: he });
+    const { subject, html } = waitlistPromotionEmail(
+      info.name || "תלמידה יקרה",
+      info.className,
+      dateStr,
+      info.startTime,
+    );
+    // Do not await — keeps API response fast.
+    sendEmail({ to: info.email, subject, html }).catch((err) => {
+      console.error("[booking] promotion email failed:", err?.message || err);
+    });
+  } catch (err) {
+    console.error("[booking] promotion email build failed:", err);
+  }
+}
 
 export class BookingEngine {
   static async bookClass(userId: string, classInstanceId: string) {
@@ -116,7 +151,7 @@ export class BookingEngine {
   }
 
   static async cancelBooking(userId: string, bookingId: string) {
-    return await db.$transaction(
+    const { refunded, promotedUser } = await db.$transaction(
       async (tx) => {
         const booking = await tx.booking.findUnique({
           where: { id: bookingId },
@@ -168,12 +203,27 @@ export class BookingEngine {
           }
         }
 
-        await BookingEngine.promoteFromWaitlist(tx, booking.classInstanceId);
+        const promoted = await BookingEngine.promoteFromWaitlist(tx, booking.classInstanceId);
 
-        return { refunded: canRefund };
+        const promotedUser: PromotedUserInfo | null = promoted
+          ? {
+              email: promoted.user.email,
+              name: promoted.user.name,
+              className: promoted.classInstance.classDefinition.title,
+              classDate: new Date(promoted.classInstance.date),
+              startTime: promoted.classInstance.startTime,
+            }
+          : null;
+
+        return { refunded: canRefund, promotedUser };
       },
       { isolationLevel: "Serializable", timeout: 10000 }
     );
+
+    // Email fires AFTER the DB transaction commits (failures won't roll back).
+    dispatchPromotionEmail(promotedUser);
+
+    return { refunded };
   }
 
   static async promoteFromWaitlist(tx: any, classInstanceId: string): Promise<any> {
@@ -258,7 +308,7 @@ export class BookingEngine {
   }
 
   static async adminRemoveStudent(classInstanceId: string, userId: string) {
-    return await db.$transaction(async (tx) => {
+    const { promotedUser } = await db.$transaction(async (tx) => {
       const booking = await tx.booking.findUnique({
         where: { userId_classInstanceId: { userId, classInstanceId } },
       });
@@ -276,9 +326,23 @@ export class BookingEngine {
         data: { currentBookings: { decrement: 1 } },
       });
 
-      await BookingEngine.promoteFromWaitlist(tx, classInstanceId);
-      return { removed: true };
+      const promoted = await BookingEngine.promoteFromWaitlist(tx, classInstanceId);
+      const promotedUser: PromotedUserInfo | null = promoted
+        ? {
+            email: promoted.user.email,
+            name: promoted.user.name,
+            className: promoted.classInstance.classDefinition.title,
+            classDate: new Date(promoted.classInstance.date),
+            startTime: promoted.classInstance.startTime,
+          }
+        : null;
+
+      return { removed: true, promotedUser };
     });
+
+    dispatchPromotionEmail(promotedUser);
+
+    return { removed: true };
   }
 
   static async markAttendance(bookingId: string, attended: boolean, markedBy: string) {

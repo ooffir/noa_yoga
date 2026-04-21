@@ -60,7 +60,7 @@ export default async function SchedulePage({ searchParams }: Props) {
   const startUTC = toUTCDate(weekStart);
   const endUTC = toUTCDate(weekEnd);
 
-  const [instances, userBookings, userWaitlist] = await Promise.all([
+  const [instances, userBookings, userWaitlist, settings] = await Promise.all([
     getCachedScheduleInstances(startUTC.toISOString(), endUTC.toISOString()),
     prisma.booking.findMany({
       where: { userId: dbUser.id, status: "CONFIRMED" },
@@ -70,7 +70,14 @@ export default async function SchedulePage({ searchParams }: Props) {
       where: { userId: dbUser.id, status: "WAITING" },
       select: { classInstanceId: true },
     }),
+    prisma.siteSettings.findUnique({
+      where: { id: "main" },
+      select: { creditPrice: true, punchCardPrice: true },
+    }).catch(() => null),
   ]);
+
+  const creditPrice = settings?.creditPrice ?? 50;
+  const punchCardPrice = settings?.punchCardPrice ?? 350;
 
   const bookedSet = new Set(userBookings.map((b) => b.classInstanceId));
   const waitlistSet = new Set(userWaitlist.map((w) => w.classInstanceId));
@@ -181,13 +188,40 @@ export default async function SchedulePage({ searchParams }: Props) {
                         </div>
                         <div className="shrink-0 pt-1">
                           {isBooked ? (
-                            <BookButton classInstanceId={inst.id} action="cancel" label="ביטול" />
+                            <BookButton
+                              classInstanceId={inst.id}
+                              action="cancel"
+                              label="ביטול"
+                              classTitle={def.title}
+                              classDate={inst.date.toISOString()}
+                              classStartTime={inst.startTime}
+                              creditPrice={creditPrice}
+                              punchCardPrice={punchCardPrice}
+                            />
                           ) : isOnWaitlist ? (
                             <span className="text-xs text-amber-600 font-medium whitespace-nowrap">ברשימת המתנה</span>
                           ) : isAvailable ? (
-                            <BookButton classInstanceId={inst.id} action="book" label="הרשמה" />
+                            <BookButton
+                              classInstanceId={inst.id}
+                              action="book"
+                              label="הרשמה"
+                              classTitle={def.title}
+                              classDate={inst.date.toISOString()}
+                              classStartTime={inst.startTime}
+                              creditPrice={creditPrice}
+                              punchCardPrice={punchCardPrice}
+                            />
                           ) : (
-                            <BookButton classInstanceId={inst.id} action="waitlist" label="רשימת המתנה" />
+                            <BookButton
+                              classInstanceId={inst.id}
+                              action="waitlist"
+                              label="רשימת המתנה"
+                              classTitle={def.title}
+                              classDate={inst.date.toISOString()}
+                              classStartTime={inst.startTime}
+                              creditPrice={creditPrice}
+                              punchCardPrice={punchCardPrice}
+                            />
                           )}
                         </div>
                       </div>

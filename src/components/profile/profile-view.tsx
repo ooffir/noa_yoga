@@ -1,16 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import toast from "react-hot-toast";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { Calendar, CreditCard, History, X, Ticket, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Spinner } from "@/components/ui/loading";
 import Link from "next/link";
+import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog";
 
 interface BookingData {
   id: string;
@@ -149,56 +147,45 @@ export function ProfileView({
 }
 
 function BookingRow({ booking, canCancel }: { booking: BookingData; canCancel?: boolean }) {
-  const router = useRouter();
-  const [cancelling, setCancelling] = useState(false);
-
-  const handleCancel = async () => {
-    if (!confirm("לבטל את ההזמנה? החזר קרדיט תלוי בזמן הביטול.")) return;
-
-    setCancelling(true);
-    try {
-      const res = await fetch(`/api/bookings/${booking.id}/cancel`, { method: "POST" });
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.error);
-        return;
-      }
-      toast.success(data.refunded ? "ההזמנה בוטלה, הקרדיט הוחזר" : "ההזמנה בוטלה (ללא החזר)");
-      router.refresh();
-    } catch {
-      toast.error("ביטול ההזמנה נכשל");
-    } finally {
-      setCancelling(false);
-    }
-  };
-
+  const [cancelOpen, setCancelOpen] = useState(false);
   const ci = booking.classInstance;
 
   return (
-    <div className="flex items-center justify-between rounded-2xl border border-sage-100 bg-sage-50/50 px-4 py-3">
-      <div>
-        <p className="font-medium text-sage-900 text-sm">{ci.classDefinition.title}</p>
-        <p className="text-xs text-sage-500">
-          {format(new Date(ci.date), "EEEE, d בMMMM", { locale: he })} · {ci.startTime} – {ci.endTime} · {ci.classDefinition.instructor}
-        </p>
+    <>
+      <div className="flex items-center justify-between rounded-2xl border border-sage-100 bg-sage-50/50 px-4 py-3">
+        <div>
+          <p className="font-medium text-sage-900 text-sm">{ci.classDefinition.title}</p>
+          <p className="text-xs text-sage-500">
+            {format(new Date(ci.date), "EEEE, d בMMMM", { locale: he })} · {ci.startTime} – {ci.endTime} · {ci.classDefinition.instructor}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {booking.status === "CANCELLED" && (
+            <Badge className="bg-red-50 text-red-500 border border-red-200 rounded-full">בוטל</Badge>
+          )}
+          {canCancel && booking.status === "CONFIRMED" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCancelOpen(true)}
+              className="text-red-500 hover:text-red-600 hover:bg-red-50"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        {booking.status === "CANCELLED" && (
-          <Badge className="bg-red-50 text-red-500 border border-red-200 rounded-full">בוטל</Badge>
-        )}
-        {canCancel && booking.status === "CONFIRMED" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="text-red-500 hover:text-red-600 hover:bg-red-50"
-          >
-            {cancelling ? <Spinner className="h-4 w-4" /> : <X className="h-4 w-4" />}
-          </Button>
-        )}
-      </div>
-    </div>
+
+      {canCancel && (
+        <CancelBookingDialog
+          open={cancelOpen}
+          onOpenChange={setCancelOpen}
+          bookingId={booking.id}
+          classTitle={ci.classDefinition.title}
+          classDate={ci.date}
+          classStartTime={ci.startTime}
+        />
+      )}
+    </>
   );
 }

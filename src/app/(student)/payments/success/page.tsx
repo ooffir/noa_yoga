@@ -3,33 +3,98 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Check, Clock3, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
+import { getDbUser } from "@/lib/get-db-user";
+import { BookingEngine } from "@/lib/booking-engine";
+import {
+  completePaymentSuccess,
+  failPayment,
+  isPaymeSuccess,
+  isPaymeFailure,
+} from "@/lib/payments";
 
-// Always read live state so the banner reflects the webhook update.
+// Always read live state so the banner reflects the latest DB status.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 interface Props {
-  searchParams: Promise<{ payment?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }
 
 export default async function PaymentSuccessPage({ searchParams }: Props) {
-  const { payment: paymentId } = await searchParams;
+  const sp = await searchParams;
+  const paymentId = sp.payment;
+  const bookClassInstanceId = sp.book;
 
   let status: "COMPLETED" | "PENDING" | "FAILED" | "UNKNOWN" = "UNKNOWN";
   let productLabel = "";
+  let creditsGranted = 0;
+  let bookingOutcome:
+    | { kind: "booked" }
+    | { kind: "waitlist" }
+    | { kind: "failed"; reason: string }
+    | null = null;
 
   if (paymentId) {
     try {
+      // ─── Self-heal: complete the payment if PayMe signals success ───
+      if (
+        isPaymeSuccess({
+          payme_status: sp.payme_status,
+          status: sp.status,
+          status_code: sp.status_code,
+        })
+      ) {
+        await completePaymentSuccess(
+          paymentId,
+          sp.payme_sale_code || sp.sale_code || null,
+        );
+      } else if (isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })) {
+        await failPayment(paymentId);
+      }
+
       const payment = await db.payment.findUnique({
         where: { id: paymentId },
         select: { status: true, type: true },
       });
+
       if (payment) {
         status = payment.status === "REFUNDED" ? "COMPLETED" : payment.status;
         productLabel =
           payment.type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
+        creditsGranted = payment.type === "PUNCH_CARD" ? 10 : 1;
       }
-    } catch {}
+
+      // ─── Auto-book into the class the user clicked "הרשמה" on ───
+      // Only fire when:
+      //   - payment completed successfully
+      //   - the redirect carried a class id to book
+      // The booking engine deducts a credit; we just granted one, so the
+      // net effect for a single-class purchase is 0 credits remaining.
+      if (status === "COMPLETED" && bookClassInstanceId) {
+        try {
+          const user = await getDbUser();
+          if (user) {
+            const result = await BookingEngine.bookClass(
+              user.id,
+              bookClassInstanceId,
+            );
+            bookingOutcome =
+              result.type === "waitlist" ? { kind: "waitlist" } : { kind: "booked" };
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : "הרישום לשיעור נכשל";
+          // Common case: user already booked this class (double-submit). Treat as success.
+          if (reason.includes("כבר רשום")) {
+            bookingOutcome = { kind: "booked" };
+          } else {
+            bookingOutcome = { kind: "failed", reason };
+            console.error("[payments/success] auto-book failed:", err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[payments/success] resolve error:", err);
+    }
   }
 
   return (
@@ -44,11 +109,27 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
               <h1 className="text-2xl font-bold text-sage-900 mb-2">
                 התשלום בוצע בהצלחה!
               </h1>
-              <p className="text-sage-500 mb-6">
-                {productLabel
-                  ? `${productLabel} נוספה לחשבון שלכם.`
-                  : "הקרדיטים נוספו לחשבון שלכם."}
-              </p>
+
+              {bookingOutcome?.kind === "booked" ? (
+                <p className="text-sage-500 mb-6">
+                  נרשמת לשיעור בהצלחה 🧘 נתראה על המזרן!
+                </p>
+              ) : bookingOutcome?.kind === "waitlist" ? (
+                <p className="text-sage-500 mb-6">
+                  השיעור מלא — נוספת לרשימת ההמתנה. הקרדיט נשמר בחשבונך.
+                </p>
+              ) : bookingOutcome?.kind === "failed" ? (
+                <p className="text-sage-500 mb-6">
+                  התשלום התקבל (נוספו {creditsGranted} קרדיטים), אבל ההרשמה לשיעור
+                  נכשלה: {bookingOutcome.reason}. ניתן לנסות להירשם מחדש ממערכת השעות.
+                </p>
+              ) : (
+                <p className="text-sage-500 mb-6">
+                  {productLabel
+                    ? `${productLabel} נוספה לחשבון (${creditsGranted} קרדיטים).`
+                    : "הקרדיטים נוספו לחשבון שלכם."}
+                </p>
+              )}
             </>
           )}
 
@@ -61,8 +142,10 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
                 התשלום בעיבוד
               </h1>
               <p className="text-sage-500 mb-6">
-                אנחנו ממתינים לאישור מחברת הסליקה. ניתן לרענן את הדף בעוד כמה שניות.
+                אנחנו ממתינים לאישור מחברת הסליקה. הדף יתעדכן אוטומטית בעוד כמה שניות.
               </p>
+              {/* eslint-disable-next-line @next/next/no-head-element */}
+              <meta httpEquiv="refresh" content="3" />
             </>
           )}
 
@@ -84,7 +167,9 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
             {status === "COMPLETED" ? (
               <>
                 <Link href="/schedule">
-                  <Button className="rounded-2xl">הרשמה לשיעור</Button>
+                  <Button className="rounded-2xl">
+                    {bookingOutcome?.kind === "booked" ? "למערכת השעות" : "הרשמה לשיעור"}
+                  </Button>
                 </Link>
                 <Link href="/profile">
                   <Button variant="outline" className="rounded-2xl">
