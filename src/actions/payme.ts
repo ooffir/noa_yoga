@@ -206,42 +206,77 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "הסדנה כבר התקיימה" };
   }
 
-  const existing = await db.workshopRegistration.findUnique({
-    where: { userId_workshopId: { userId: user.id, workshopId } },
-  });
-  if (existing && existing.paymentStatus === "COMPLETED") {
+  // ─── Atomic capacity check + registration upsert ───
+  // Must run inside a Serializable transaction so two users clicking
+  // "Register" for the last spot at the same time can't both succeed.
+  // Mirror of the BookingEngine.bookClass pattern for class seats.
+  type RegistrationResult =
+    | { kind: "already_completed" }
+    | { kind: "full" }
+    | { kind: "ok"; registrationId: string };
+
+  let txResult: RegistrationResult;
+  try {
+    txResult = await db.$transaction(
+      async (tx) => {
+        const existing = await tx.workshopRegistration.findUnique({
+          where: { userId_workshopId: { userId: user.id, workshopId } },
+        });
+        if (existing && existing.paymentStatus === "COMPLETED") {
+          return { kind: "already_completed" as const };
+        }
+
+        if (workshop.maxCapacity) {
+          const count = await tx.workshopRegistration.count({
+            where: { workshopId, paymentStatus: { not: "CANCELLED" } },
+          });
+          // If the current user already has a PENDING row, it's included
+          // in the count — don't double-count them when deciding capacity.
+          const userCountsAsNewSeat = !(existing && existing.paymentStatus === "PENDING");
+          const effectiveCount = userCountsAsNewSeat ? count + 1 : count;
+          if (effectiveCount > workshop.maxCapacity) {
+            return { kind: "full" as const };
+          }
+        }
+
+        // Upsert: the unique (userId, workshopId) index guarantees dedup
+        // even under concurrent writes. Resets PENDING status if the user
+        // previously attempted and abandoned / cancelled.
+        const registration = await tx.workshopRegistration.upsert({
+          where: { userId_workshopId: { userId: user.id, workshopId } },
+          create: { userId: user.id, workshopId, paymentStatus: "PENDING" },
+          update: { paymentStatus: "PENDING" },
+        });
+
+        return { kind: "ok" as const, registrationId: registration.id };
+      },
+      { isolationLevel: "Serializable", timeout: 10_000 },
+    );
+  } catch (err) {
+    // Serializable isolation can throw on write conflicts — translate to
+    // a user-friendly "try again" rather than crashing.
+    console.error("[payme-workshop] capacity tx error:", err);
+    return { ok: false, error: "אירעה שגיאה, נסו שוב" };
+  }
+
+  if (txResult.kind === "already_completed") {
     return { ok: false, error: "כבר נרשמת לסדנה זו" };
   }
-
-  if (workshop.maxCapacity) {
-    const count = await db.workshopRegistration.count({
-      where: { workshopId, paymentStatus: { not: "CANCELLED" } },
-    });
-    const effectiveCount =
-      existing && existing.paymentStatus === "PENDING" ? count : count + 1;
-    if (effectiveCount > workshop.maxCapacity) {
-      return { ok: false, error: "הסדנה מלאה" };
-    }
+  if (txResult.kind === "full") {
+    return { ok: false, error: "הסדנה מלאה" };
   }
 
-  const registration = existing
-    ? await db.workshopRegistration.update({
-        where: { id: existing.id },
-        data: { paymentStatus: "PENDING" },
-      })
-    : await db.workshopRegistration.create({
-        data: { userId: user.id, workshopId, paymentStatus: "PENDING" },
-      });
+  const registrationId = txResult.registrationId;
 
   return callGenerateSale({
     amountIls: workshop.price,
     productName: workshop.title,
-    customRef: `wsr:${registration.id}`,
+    customRef: `wsr:${registrationId}`,
     userId: user.id,
     extraCustom: workshop.id,
     userEmail: user.email,
     userName: user.name,
-    returnPath: `/workshops?success=true&registration=${registration.id}`,
+    returnPath: `/workshops?success=true&registration=${registrationId}`,
     cancelPath: "/workshops?cancelled=true",
   });
 }
@@ -291,16 +326,37 @@ export async function generatePaymeSaleForCredits(
   const productName =
     type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
 
-  // Create a PENDING payment row so we can correlate the IPN.
-  const payment = await db.payment.create({
-    data: {
+  // Server-side dedup window: if the same user started a PENDING payment
+  // for the same type within the last 60 seconds, reuse that row instead
+  // of creating a new one. Together with the client-side useRef guard,
+  // this eliminates the "duplicate stuck Payment row" problem that can
+  // happen from rapid double-clicks, multi-tab checkout, or bot replay.
+  const DEDUP_WINDOW_MS = 60_000;
+  const recentPending = await db.payment.findFirst({
+    where: {
       userId: user.id,
       type,
-      // amount is stored in agurot for consistency with our existing schema.
-      amount: amountIls * 100,
       status: "PENDING",
+      createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
     },
+    orderBy: { createdAt: "desc" },
   });
+
+  const payment =
+    recentPending ??
+    (await db.payment.create({
+      data: {
+        userId: user.id,
+        type,
+        // amount is stored in agurot for consistency with our existing schema.
+        amount: amountIls * 100,
+        status: "PENDING",
+      },
+    }));
+
+  if (recentPending) {
+    console.log("[payme-credits] reusing recent PENDING payment:", payment.id);
+  }
 
   // Append optional auto-book class id so /payments/success can register
   // the user into the class after payment completes.

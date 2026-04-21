@@ -11,6 +11,7 @@ import {
   isPaymeSuccess,
   isPaymeFailure,
 } from "@/lib/payments";
+import { verifyPaymeSale } from "@/lib/payme-verify";
 import { PendingPoller } from "@/components/payments/pending-poller";
 
 // Always read live state so the banner reflects the latest DB status.
@@ -38,6 +39,13 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
   if (paymentId) {
     try {
       // ─── Self-heal: complete the payment if PayMe signals success ───
+      // Like the webhook, we don't blindly trust URL query params. A user
+      // can trivially craft `?payment=<id>&payme_status=success` in their
+      // address bar — so we re-verify via PayMe's server-to-server API
+      // before granting any credits. Without verification the whole C4
+      // hardening would be bypassable through this page.
+      const urlSaleCode = sp.payme_sale_code || sp.sale_code || null;
+
       if (
         isPaymeSuccess({
           payme_status: sp.payme_status,
@@ -45,10 +53,23 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
           status_code: sp.status_code,
         })
       ) {
-        await completePaymentSuccess(
-          paymentId,
-          sp.payme_sale_code || sp.sale_code || null,
-        );
+        if (urlSaleCode) {
+          const verification = await verifyPaymeSale(urlSaleCode);
+          if (verification.ok) {
+            await completePaymentSuccess(paymentId, urlSaleCode);
+          } else {
+            console.warn(
+              "[payments/success] URL success claim failed verification:",
+              verification,
+            );
+          }
+        } else {
+          // No sale code means we can't verify — don't self-heal here.
+          // The real PayMe IPN webhook is still the authoritative path.
+          console.warn(
+            "[payments/success] success claim has no sale code, skipping self-heal",
+          );
+        }
       } else if (isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })) {
         await failPayment(paymentId);
       }

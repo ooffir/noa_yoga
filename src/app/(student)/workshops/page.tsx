@@ -9,6 +9,7 @@ import {
   isPaymeSuccess,
   isPaymeFailure,
 } from "@/lib/payments";
+import { verifyPaymeSale } from "@/lib/payme-verify";
 
 // Always read fresh payment state from the DB so the confirmation banner
 // reflects the webhook update immediately after redirect.
@@ -29,14 +30,34 @@ export default async function WorkshopsPage({ searchParams }: Props) {
   // ─── Self-healing: if PayMe redirected back with a registration id AND
   // signals success/failure, reconcile the DB here so the user always sees
   // the correct banner on first render (no webhook race).
+  // SUCCESS claims are verified via PayMe's server-to-server API (C4) so
+  // this page can't be used to forge a completed registration.
   if (sp.registration) {
     try {
-      if (isPaymeSuccess({
-        payme_status: sp.payme_status,
-        status: sp.status,
-        status_code: sp.status_code,
-      })) {
-        await completeWorkshopSuccess(sp.registration);
+      const urlSaleCode = sp.payme_sale_code || sp.sale_code || null;
+
+      if (
+        isPaymeSuccess({
+          payme_status: sp.payme_status,
+          status: sp.status,
+          status_code: sp.status_code,
+        })
+      ) {
+        if (urlSaleCode) {
+          const verification = await verifyPaymeSale(urlSaleCode);
+          if (verification.ok) {
+            await completeWorkshopSuccess(sp.registration);
+          } else {
+            console.warn(
+              "[workshops] URL success claim failed verification:",
+              verification,
+            );
+          }
+        } else {
+          console.warn(
+            "[workshops] success claim has no sale code, skipping self-heal",
+          );
+        }
       } else if (
         sp.cancelled === "true" ||
         isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })

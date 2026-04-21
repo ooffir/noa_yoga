@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Ticket, Sparkles, ArrowLeft } from "lucide-react";
@@ -35,10 +35,15 @@ export function BookChoiceDialog({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [redirecting, setRedirecting] = useState(false);
+  // Synchronous double-click guard (see pricing-cards.tsx for rationale).
+  const submittingRef = useRef(false);
 
   const loading = pending || redirecting;
 
   const handleSingleClass = () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     startTransition(async () => {
       const result = await generatePaymeSaleForCredits(
         "SINGLE_CLASS",
@@ -46,6 +51,7 @@ export function BookChoiceDialog({
       );
       if (!result.ok) {
         toast.error(result.error);
+        submittingRef.current = false;
         return;
       }
       toast.success("מעבירים לדף התשלום…");

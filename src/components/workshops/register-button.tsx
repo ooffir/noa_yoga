@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
@@ -17,18 +17,25 @@ export function WorkshopRegisterButton({ workshopId }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [redirecting, setRedirecting] = useState(false);
+  // Synchronous double-click guard — useState is batched, a useRef mutates
+  // immediately so a second rapid click is blocked before it can fire the
+  // server action and create a duplicate PENDING registration.
+  const submittingRef = useRef(false);
 
   const handleRegister = () => {
     if (!isSignedIn) {
       router.push("/sign-in");
       return;
     }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
 
     startTransition(async () => {
       const result = await generatePaymeSaleForWorkshop(workshopId);
 
       if (!result.ok) {
         toast.error(result.error);
+        submittingRef.current = false;
         return;
       }
 

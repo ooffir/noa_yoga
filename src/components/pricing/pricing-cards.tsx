@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -24,6 +24,10 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
   const router = useRouter();
   const [pendingType, setPendingType] = useState<CreditPurchaseType | null>(null);
   const [, startTransition] = useTransition();
+  // Synchronous guard — `useState` is batched/async, so two rapid clicks
+  // could both fire the server action and create duplicate Payment rows.
+  // `useRef.current` mutates immediately and blocks re-entry.
+  const submittingRef = useRef(false);
 
   const savings = creditPrice * 10 - punchCardPrice;
 
@@ -60,17 +64,21 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
       router.push("/sign-in");
       return;
     }
+    if (submittingRef.current) return; // block re-entry (double-click)
+    submittingRef.current = true;
     setPendingType(type);
+
     startTransition(async () => {
       const result = await generatePaymeSaleForCredits(type);
       if (!result.ok) {
         toast.error(result.error);
         setPendingType(null);
+        submittingRef.current = false;
         return;
       }
       toast.success("מעבירים לדף התשלום…");
+      // Keep the ref & state set — browser is about to redirect.
       window.location.href = result.url;
-      // keep pendingType set so the spinner stays during the redirect
     });
   };
 
