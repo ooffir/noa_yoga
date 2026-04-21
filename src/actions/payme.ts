@@ -51,13 +51,32 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
     process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
   const siteUrl = rawSiteUrl.trim().replace(/\/+$/, "");
 
-  if (!sellerUid || !apiUrl || !siteUrl) {
-    console.error("[payme] missing env vars:", {
-      PAYME_SELLER_UID: sellerUid ? "set" : "MISSING",
-      PAYME_API_URL: apiUrl ? "set" : "MISSING",
-      NEXT_PUBLIC_SITE_URL: siteUrl ? "set" : "MISSING",
+  // TEMP DEBUG: expose *which* variable is missing and what the API URL looks like
+  // so we can diagnose misconfig on Vercel. Remove once payments are stable.
+  const missing: string[] = [];
+  if (!sellerUid) missing.push("PAYME_SELLER_UID");
+  if (!apiUrl) missing.push("PAYME_API_URL");
+  if (!siteUrl) missing.push("NEXT_PUBLIC_SITE_URL");
+
+  // Even when all three are "present", the URL may be malformed (e.g., a token
+  // pasted into PAYME_API_URL). Validate it's actually an http(s) URL.
+  const apiUrlLooksValid = !!apiUrl && /^https?:\/\//i.test(apiUrl);
+  if (apiUrl && !apiUrlLooksValid) {
+    missing.push(`PAYME_API_URL (invalid: "${apiUrl.slice(0, 40)}…")`);
+  }
+
+  if (missing.length > 0 || !sellerUid || !apiUrl || !siteUrl) {
+    console.error("[payme] env check failed:", {
+      PAYME_SELLER_UID: sellerUid ? `set (len=${sellerUid.length})` : "MISSING",
+      PAYME_API_URL: apiUrl
+        ? `set (${apiUrlLooksValid ? "valid URL" : "INVALID — not http(s)"}: ${apiUrl.slice(0, 60)})`
+        : "MISSING",
+      NEXT_PUBLIC_SITE_URL: siteUrl ? `set (${siteUrl})` : "MISSING",
     });
-    return { ok: false, error: "תצורת תשלום חסרה. אנא פנו למנהל." };
+    return {
+      ok: false,
+      error: `[debug] חסרים/לא תקינים: ${missing.join(", ")}`,
+    };
   }
 
   // PayMe expects the price in agurot (ILS cents).
