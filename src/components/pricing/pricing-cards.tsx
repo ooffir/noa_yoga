@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/loading";
 import { cn } from "@/lib/utils";
+import {
+  generatePaymeSaleForCredits,
+  type CreditPurchaseType,
+} from "@/actions/payme";
 
 interface Props {
   creditPrice: number;
@@ -18,7 +22,8 @@ interface Props {
 export function PricingCards({ creditPrice, punchCardPrice }: Props) {
   const { isSignedIn } = useUser();
   const router = useRouter();
-  const [loading, setLoading] = useState<string | null>(null);
+  const [pendingType, setPendingType] = useState<CreditPurchaseType | null>(null);
+  const [, startTransition] = useTransition();
 
   const savings = creditPrice * 10 - punchCardPrice;
 
@@ -50,26 +55,23 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
     },
   ];
 
-  const handlePurchase = async (type: string) => {
+  const handlePurchase = (type: CreditPurchaseType) => {
     if (!isSignedIn) {
       router.push("/sign-in");
       return;
     }
-    setLoading(type);
-    try {
-      const res = await fetch("/api/payments/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "הרכישה נכשלה"); return; }
-      window.location.href = data.url;
-    } catch {
-      toast.error("משהו השתבש, נסו שוב");
-    } finally {
-      setLoading(null);
-    }
+    setPendingType(type);
+    startTransition(async () => {
+      const result = await generatePaymeSaleForCredits(type);
+      if (!result.ok) {
+        toast.error(result.error);
+        setPendingType(null);
+        return;
+      }
+      toast.success("מעבירים לדף התשלום…");
+      window.location.href = result.url;
+      // keep pendingType set so the spinner stays during the redirect
+    });
   };
 
   return (
@@ -106,10 +108,10 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
             <Button
               className="w-full rounded-2xl"
               variant={plan.highlighted ? "default" : "outline"}
-              onClick={() => handlePurchase(plan.id)}
-              disabled={loading !== null}
+              onClick={() => handlePurchase(plan.id as CreditPurchaseType)}
+              disabled={pendingType !== null}
             >
-              {loading === plan.id ? <Spinner className="h-4 w-4" /> : "רכישה"}
+              {pendingType === plan.id ? <Spinner className="h-4 w-4" /> : "רכישה"}
             </Button>
           </CardContent>
         </Card>

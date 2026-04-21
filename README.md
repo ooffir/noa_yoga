@@ -13,7 +13,7 @@ A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, a
 | UI Components | Radix UI (Dialog, Slot) |
 | Icons | lucide-react (named imports only) |
 | Validation | Zod |
-| Payments | PayPlus (Israeli payment provider) |
+| Payments | PayMe (Israeli payment provider — sole gateway) |
 | Email | Nodemailer (implemented but using placeholder SMTP credentials) |
 | Webhooks | Svix (Clerk webhook verification) |
 
@@ -75,9 +75,8 @@ A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, a
 | `POST /api/admin/students/[id]` | Admin add/remove student from class |
 | `GET/POST /api/admin/attendance/[instanceId]` | Attendance data + marking |
 | `POST /api/webhooks/clerk` | Clerk user sync webhook |
-| `POST /api/payments/checkout` | PayPlus payment page creation (credits / punch cards) |
-| `POST /api/payments/webhook` | PayPlus payment webhook (credits / punch cards) |
-| `POST /api/webhooks/payme` | PayMe IPN webhook — marks workshop registrations COMPLETED |
+| — | Credit / punch-card purchases handled by the `generatePaymeSaleForCredits` server action (`src/actions/payme.ts`) |
+| `POST /api/webhooks/payme` | PayMe IPN webhook — handles **both** workshop registrations and credit/punch-card payments via `custom_1` prefix (`wsr:` / `pay:`) |
 | `GET /api/cron/generate-instances` | Auto-generate class instances |
 | `GET /api/cron/reminders` | Send reminder emails |
 
@@ -91,7 +90,7 @@ A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, a
 | Booking | Student → ClassInstance registration |
 | WaitlistEntry | Waitlist with auto-promotion |
 | PunchCard | 10-class credit cards |
-| Payment | Stripe payment records |
+| Payment | PayMe payment records (credits / punch-card purchases) |
 | Article | Internal blog posts with slug routing |
 | Workshop | Standalone paid events |
 | WorkshopRegistration | Workshop signups (separate from class credits) |
@@ -161,12 +160,17 @@ The admin can configure from `/admin/settings`:
 - PgBouncer connection pooling (`connection_limit=5, pool_timeout=30`)
 - Indexes on `clerkId`, `email`, `date`, `status`, `role`, `slug`
 
-## PayPlus & Email Status
+## PayMe & Email Status
 
-**PayPlus**: The payment integration uses PayPlus (Israeli provider). It creates a payment page link, redirects the user, and processes the webhook callback to grant credits. To activate:
-1. Create a PayPlus account at https://www.payplus.co.il
-2. Set `PAYPLUS_API_KEY`, `PAYPLUS_SECRET_KEY`, and `PAYPLUS_PAGE_UID` in `.env`
-3. Set the webhook URL in PayPlus dashboard to: `https://yourdomain.com/api/payments/webhook`
+**PayMe**: Sole payment gateway for both workshops and credit/punch-card purchases. The integration uses PayMe's hosted-payment-page API (`/api/generate-sale`). Every sale passes a `custom_1` prefix that the IPN webhook uses to dispatch to the correct handler:
+
+- `wsr:<registrationId>` → updates a `WorkshopRegistration`
+- `pay:<paymentId>` → updates a `Payment` and atomically creates the `PunchCard` with the purchased credits
+
+To activate:
+1. Create a PayMe merchant account at https://www.paymeservice.com
+2. Set `PAYME_SELLER_UID`, `PAYME_API_URL`, and `NEXT_PUBLIC_SITE_URL` in `.env` / Vercel
+3. In the PayMe dashboard, set the IPN/callback URL to: `https://yourdomain.com/api/webhooks/payme` (the URL is also sent per-request; dashboard value is a fallback)
 4. Prices are configured dynamically from Admin Settings (`/admin/settings`)
 
 **Nodemailer**: Email sending is implemented (booking confirmations, waitlist promotions, reminders). The SMTP credentials are placeholders. To activate:
@@ -188,10 +192,10 @@ CLERK_WEBHOOK_SECRET=
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-# PayPlus
-PAYPLUS_API_KEY=
-PAYPLUS_SECRET_KEY=
-PAYPLUS_PAGE_UID=
+# PayMe (sole payment gateway)
+PAYME_SELLER_UID=
+PAYME_API_URL=https://preprod.paymeservice.com/api/generate-sale
+NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 
 # Email (SMTP)
 SMTP_HOST=
@@ -224,7 +228,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 | `package.json` | Build config | Dependencies, versions, `npm` scripts (`dev`, `build`, `db:push`, `db:seed`, `db:studio`) |
 | `postcss.config.js` | Build config | PostCSS pipeline for Tailwind + autoprefixer |
 | `tailwind.config.ts` | Build config | Tailwind theme — brand color palette (earthy green / cream), Varela Round font, custom animations |
-| `.env` | Secrets | Runtime env: DB URLs (Supabase Frankfurt), Clerk keys, PayPlus keys, SMTP, cron secret |
+| `.env` | Secrets | Runtime env: DB URLs (Supabase Frankfurt), Clerk keys, PayMe credentials, SMTP, cron secret |
 | `full_site_backup.json` | Backup artifact | Latest JSON snapshot of all tables — used as source for one-off imports/restores |
 | `README.md` | Docs | This file |
 
@@ -267,7 +271,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 | `src/app/(student)/schedule/loading.tsx` | Route segment | Skeleton shown while schedule data resolves |
 | `src/app/(student)/profile/page.tsx` | Route `/profile` | Personal area — current credits, booking history, active punch cards |
 | `src/app/(student)/pricing/page.tsx` | Route `/pricing` | Renders `<PricingCards>` with prices pulled dynamically from `SiteSettings` |
-| `src/app/(student)/payments/success/page.tsx` | Route `/payments/success` | Post-PayPlus confirmation screen, reads `?status=` query |
+| `src/app/(student)/payments/success/page.tsx` | Route `/payments/success` | Post-payment confirmation screen; reads `?payment=<id>`, looks up the `Payment` in DB and shows success / pending / failed banner |
 | `src/app/(student)/articles/page.tsx` | Route `/articles` | Magazine listing grid — image + title + excerpt, links to `[slug]` |
 | `src/app/(student)/articles/[slug]/page.tsx` | Route `/articles/[slug]` | Individual article reader; `generateMetadata` for SEO; decodes Hebrew slug |
 | `src/app/(student)/workshops/page.tsx` | Route `/workshops` | Workshops listing with `<RegisterButton>` per card |
@@ -319,9 +323,8 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 
 | File | Context | Target |
 |------|---------|--------|
-| `src/app/api/payments/checkout/route.ts` | `POST` | Creates a PayPlus payment page for a credit or punch-card purchase; creates `Payment(PENDING)` |
-| `src/app/api/payments/webhook/route.ts` | `POST` | PayPlus callback — verifies signature, marks `Payment(COMPLETED)`, credits user or creates `PunchCard` |
-| `src/app/api/webhooks/payme/route.ts` | `POST` | PayMe IPN callback — reads `custom_1` (registrationId), flips `WorkshopRegistration` to `COMPLETED`/`CANCELLED`, revalidates `/workshops` |
+| `src/actions/payme.ts` | Server Action | Exposes `generatePaymeSaleForWorkshop(workshopId)` and `generatePaymeSaleForCredits(type)` — creates PENDING DB rows and returns a PayMe hosted-payment URL |
+| `src/app/api/webhooks/payme/route.ts` | `POST` | PayMe IPN callback — parses `custom_1` prefix (`wsr:` / `pay:`) to dispatch. On success: flips `WorkshopRegistration` to `COMPLETED` **or** flips `Payment` to `COMPLETED` + creates a `PunchCard` atomically |
 | `src/app/api/webhooks/clerk/route.ts` | `POST` | Svix-verified Clerk webhook — syncs `user.created`/`updated` to DB, assigns `ADMIN` role by email |
 
 ### API routes — cron
@@ -356,7 +359,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 | File | Context | Target |
 |------|---------|--------|
 | `src/components/schedule/book-button.tsx` | Client | Booking CTA — handles "Book", "Cancel", "Pay & Book", and waitlist states |
-| `src/components/pricing/pricing-cards.tsx` | Client | Two pricing cards (single / punch card) — triggers PayPlus checkout |
+| `src/components/pricing/pricing-cards.tsx` | Client | Two pricing cards (single / punch card) — calls the `generatePaymeSaleForCredits` server action and redirects to PayMe |
 | `src/components/workshops/register-button.tsx` | Client | Workshop registration + payment trigger |
 | `src/components/profile/profile-view.tsx` | Client | Personal area — credits, upcoming bookings, history, active punch cards |
 
@@ -384,7 +387,7 @@ Every file in the project, grouped by area. **Context** = where it lives / what 
 | `src/lib/schedule-service.ts` | Domain | Recurring-class expansion (generates `ClassInstance`s for a date range) |
 | `src/lib/validations.ts` | Validation | Zod schemas for all API inputs (booking, class CRUD, settings, etc.) |
 | `src/lib/email.ts` | Integration | Nodemailer transport — booking confirmation, waitlist promotion, class reminder templates |
-| `src/lib/payplus.ts` | Integration | PayPlus API client — `createPaymentLink()`, `verifyWebhook()`, error normalization |
+| `src/actions/payme.ts` | Integration | PayMe client + two server actions: `generatePaymeSaleForWorkshop()` and `generatePaymeSaleForCredits()`. Uses `custom_1` prefix (`wsr:` / `pay:`) to correlate IPN callbacks |
 | `src/lib/utils.ts` | Helpers | `cn()` for Tailwind class merging + small date/formatting helpers |
 
 ## Local Development

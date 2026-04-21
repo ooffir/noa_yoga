@@ -8,17 +8,12 @@ import { db } from "@/lib/db";
  *
  * Docs: https://developers.paymeservice.com/
  *
- * Flow:
- *   1. User clicks "Register & Pay" on a workshop.
- *   2. This server action is invoked.
- *   3. We authenticate via Clerk, load the workshop, create a PENDING
- *      WorkshopRegistration row so we have a stable ID to correlate.
- *   4. We POST to PayMe's /api/generate-sale, passing the registrationId
- *      as `custom_1` (round-trips back in the IPN).
- *   5. PayMe returns a `sale_url` — the hosted checkout page.
- *   6. The client redirects the browser to that URL.
- *   7. When payment completes, PayMe calls /api/webhooks/payme and we
- *      flip the registration to COMPLETED.
+ * Two sale kinds share this single integration:
+ *   - Workshop registration  → custom_1 = "wsr:<registrationId>"
+ *   - Credit / punch card    → custom_1 = "pay:<paymentId>"
+ *
+ * The webhook at /api/webhooks/payme parses the custom_1 prefix to
+ * dispatch the correct DB update.
  */
 
 export type PaymeSaleResult =
@@ -33,6 +28,132 @@ interface PaymeGenerateSaleResponse {
   payme_sale_code?: string;
 }
 
+interface PaymeSaleInput {
+  amountIls: number;
+  productName: string;
+  customRef: string;
+  userId: string;
+  extraCustom?: string;
+  userEmail?: string | null;
+  userName?: string | null;
+  returnPath: string;
+  cancelPath: string;
+}
+
+/**
+ * Shared helper: talks to PayMe's /api/generate-sale endpoint.
+ */
+async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult> {
+  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
+  const apiUrl = process.env.PAYME_API_URL?.trim();
+  // Strip trailing slash to prevent "//api/webhooks/payme" callback URLs.
+  const rawSiteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
+  const siteUrl = rawSiteUrl.trim().replace(/\/+$/, "");
+
+  if (!sellerUid || !apiUrl || !siteUrl) {
+    console.error("[payme] missing env vars:", {
+      PAYME_SELLER_UID: sellerUid ? "set" : "MISSING",
+      PAYME_API_URL: apiUrl ? "set" : "MISSING",
+      NEXT_PUBLIC_SITE_URL: siteUrl ? "set" : "MISSING",
+    });
+    return { ok: false, error: "תצורת תשלום חסרה. אנא פנו למנהל." };
+  }
+
+  // PayMe expects the price in agurot (ILS cents).
+  const salePriceAgurot = Math.round(input.amountIls * 100);
+
+  const body = {
+    seller_uid: sellerUid,
+    sale_price: salePriceAgurot,
+    currency: "ILS",
+    product_name: input.productName,
+    sale_return_url: `${siteUrl}${input.returnPath}`,
+    sale_callback_url: `${siteUrl}/api/webhooks/payme`,
+    sale_back_url: `${siteUrl}${input.cancelPath}`,
+    sale_customer_fields: {
+      email: input.userEmail ?? undefined,
+      name: input.userName ?? undefined,
+    },
+    custom_1: input.customRef,
+    custom_2: input.userId,
+    custom_3: input.extraCustom,
+  };
+
+  console.log("[payme-debug] request:", {
+    apiUrl,
+    sellerUidMasked: sellerUid.slice(0, 4) + "…" + sellerUid.slice(-2),
+    sale_price: salePriceAgurot,
+    product_name: input.productName,
+    sale_callback_url: body.sale_callback_url,
+    sale_return_url: body.sale_return_url,
+    custom_1: input.customRef,
+  });
+
+  let paymeResponse: PaymeGenerateSaleResponse;
+  try {
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    const text = await res.text();
+    console.log("[payme-debug] full response:", { httpStatus: res.status, body: text });
+
+    try {
+      paymeResponse = JSON.parse(text);
+    } catch {
+      console.error("[payme] non-JSON response:", res.status, text.slice(0, 300));
+      return {
+        ok: false,
+        error: `PayMe החזיר תגובה לא תקינה (HTTP ${res.status}): ${text.slice(0, 120)}`,
+      };
+    }
+
+    if (!res.ok) {
+      console.error("[payme] HTTP error:", res.status, paymeResponse);
+      return {
+        ok: false,
+        error:
+          paymeResponse.status_error_details ||
+          `PayMe החזיר שגיאה (HTTP ${res.status})`,
+      };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[payme] fetch failed:", msg);
+    return { ok: false, error: `לא ניתן להתחבר לספק התשלום: ${msg}` };
+  }
+
+  if (paymeResponse.status_code !== 0 && paymeResponse.status_error_code) {
+    console.error("[payme] sale failed:", paymeResponse);
+    return {
+      ok: false,
+      error:
+        paymeResponse.status_error_details ||
+        `PayMe error ${paymeResponse.status_error_code}`,
+    };
+  }
+
+  if (!paymeResponse.sale_url) {
+    console.error("[payme] no sale_url in response:", paymeResponse);
+    return {
+      ok: false,
+      error:
+        paymeResponse.status_error_details ||
+        "PayMe לא החזיר קישור לדף תשלום",
+    };
+  }
+
+  return { ok: true, url: paymeResponse.sale_url };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Workshop registration
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function generatePaymeSaleForWorkshop(
   workshopId: string,
 ): Promise<PaymeSaleResult> {
@@ -40,22 +161,11 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "מזהה סדנה חסר" };
   }
 
-  const sellerUid = process.env.PAYME_SELLER_UID;
-  const apiUrl = process.env.PAYME_API_URL;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
-
-  if (!sellerUid || !apiUrl || !siteUrl) {
-    console.error("[payme] missing env: PAYME_SELLER_UID / PAYME_API_URL / NEXT_PUBLIC_SITE_URL");
-    return { ok: false, error: "תצורת תשלום חסרה. אנא פנו למנהל." };
-  }
-
-  // 1. Auth
   const user = await getDbUser();
   if (!user) {
     return { ok: false, error: "יש להתחבר כדי להירשם לסדנה" };
   }
 
-  // 2. Load workshop
   const workshop = await db.workshop.findUnique({ where: { id: workshopId } });
   if (!workshop || !workshop.isActive) {
     return { ok: false, error: "הסדנה לא נמצאה" };
@@ -64,7 +174,6 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "הסדנה כבר התקיימה" };
   }
 
-  // Duplicate / capacity checks
   const existing = await db.workshopRegistration.findUnique({
     where: { userId_workshopId: { userId: user.id, workshopId } },
   });
@@ -76,14 +185,13 @@ export async function generatePaymeSaleForWorkshop(
     const count = await db.workshopRegistration.count({
       where: { workshopId, paymentStatus: { not: "CANCELLED" } },
     });
-    // If we already have a PENDING row from this user, it's counted — allow it.
-    const effectiveCount = existing && existing.paymentStatus === "PENDING" ? count : count + 1;
+    const effectiveCount =
+      existing && existing.paymentStatus === "PENDING" ? count : count + 1;
     if (effectiveCount > workshop.maxCapacity) {
       return { ok: false, error: "הסדנה מלאה" };
     }
   }
 
-  // 3. Create (or reuse) a PENDING registration row
   const registration = existing
     ? await db.workshopRegistration.update({
         where: { id: existing.id },
@@ -93,70 +201,77 @@ export async function generatePaymeSaleForWorkshop(
         data: { userId: user.id, workshopId, paymentStatus: "PENDING" },
       });
 
-  // 4. Call PayMe generate-sale
-  // PayMe expects the price in agurot (ILS cents). Our Workshop.price is stored in whole ILS.
-  const salePriceAgurot = Math.round(workshop.price * 100);
+  return callGenerateSale({
+    amountIls: workshop.price,
+    productName: workshop.title,
+    customRef: `wsr:${registration.id}`,
+    userId: user.id,
+    extraCustom: workshop.id,
+    userEmail: user.email,
+    userName: user.name,
+    returnPath: `/workshops?success=true&registration=${registration.id}`,
+    cancelPath: "/workshops?cancelled=true",
+  });
+}
 
-  const body = {
-    seller_uid: sellerUid,
-    sale_price: salePriceAgurot,
-    currency: "ILS",
-    product_name: workshop.title,
-    sale_return_url: `${siteUrl}/workshops?success=true&registration=${registration.id}`,
-    sale_callback_url: `${siteUrl}/api/webhooks/payme`,
-    sale_back_url: `${siteUrl}/workshops?cancelled=true`,
-    sale_customer_fields: { email: user.email, name: user.name ?? undefined },
-    custom_1: registration.id,
-    custom_2: user.id,
-    custom_3: workshop.id,
-  };
+// ─────────────────────────────────────────────────────────────────────────────
+//  Credit / punch-card purchase
+// ─────────────────────────────────────────────────────────────────────────────
 
-  let paymeResponse: PaymeGenerateSaleResponse;
+export type CreditPurchaseType = "SINGLE_CLASS" | "PUNCH_CARD";
+
+export async function generatePaymeSaleForCredits(
+  type: CreditPurchaseType,
+): Promise<PaymeSaleResult> {
+  if (type !== "SINGLE_CLASS" && type !== "PUNCH_CARD") {
+    return { ok: false, error: "סוג רכישה לא תקין" };
+  }
+
+  const user = await getDbUser();
+  if (!user) {
+    return { ok: false, error: "יש להתחבר כדי לרכוש" };
+  }
+
+  // Dynamic prices from admin settings — fallback to sane defaults.
+  let creditPrice = 50;
+  let punchCardPrice = 350;
   try {
-    const res = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-      // PayMe responds quickly; fail fast if it hangs.
-      signal: AbortSignal.timeout(15_000),
+    const settings = await db.siteSettings.findUnique({
+      where: { id: "main" },
+      select: { creditPrice: true, punchCardPrice: true },
     });
-
-    const text = await res.text();
-    try {
-      paymeResponse = JSON.parse(text);
-    } catch {
-      console.error("[payme] non-JSON response:", res.status, text.slice(0, 300));
-      return { ok: false, error: "שגיאת תקשורת עם ספק התשלום" };
-    }
-
-    if (!res.ok) {
-      console.error("[payme] HTTP error:", res.status, paymeResponse);
-      return {
-        ok: false,
-        error: paymeResponse.status_error_details || "שגיאת ספק התשלום",
-      };
+    if (settings) {
+      creditPrice = settings.creditPrice;
+      punchCardPrice = settings.punchCardPrice;
     }
   } catch (err) {
-    console.error("[payme] fetch failed:", err instanceof Error ? err.message : err);
-    return { ok: false, error: "לא ניתן להתחבר לספק התשלום. נסו שוב." };
+    console.error("[payme-credits] failed to read settings:", err);
   }
 
-  // 5. Validate the sale URL
-  if (paymeResponse.status_code !== 0 && paymeResponse.status_error_code) {
-    console.error("[payme] sale failed:", paymeResponse);
-    return {
-      ok: false,
-      error: paymeResponse.status_error_details || "לא ניתן ליצור דף תשלום",
-    };
-  }
+  const amountIls = type === "PUNCH_CARD" ? punchCardPrice : creditPrice;
+  const productName =
+    type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
 
-  if (!paymeResponse.sale_url) {
-    console.error("[payme] no sale_url in response:", paymeResponse);
-    return { ok: false, error: "לא התקבל קישור תשלום" };
-  }
+  // Create a PENDING payment row so we can correlate the IPN.
+  const payment = await db.payment.create({
+    data: {
+      userId: user.id,
+      type,
+      // amount is stored in agurot for consistency with our existing schema.
+      amount: amountIls * 100,
+      status: "PENDING",
+    },
+  });
 
-  return { ok: true, url: paymeResponse.sale_url };
+  return callGenerateSale({
+    amountIls,
+    productName,
+    customRef: `pay:${payment.id}`,
+    userId: user.id,
+    extraCustom: type,
+    userEmail: user.email,
+    userName: user.name,
+    returnPath: `/payments/success?payment=${payment.id}`,
+    cancelPath: "/pricing?cancelled=true",
+  });
 }
