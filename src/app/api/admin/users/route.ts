@@ -9,13 +9,15 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // Show ALL registered users (admins + students). The UI tags them by role
+    // so the admin can see who signed up and manage their credits if needed.
     const users = await db.user.findMany({
-      where: { role: "STUDENT" },
       select: {
         id: true,
         name: true,
         email: true,
         phone: true,
+        role: true,
         credits: true,
         createdAt: true,
         _count: { select: { bookings: { where: { status: "CONFIRMED" } } } },
@@ -24,7 +26,8 @@ export async function GET() {
           select: { remainingCredits: true },
         },
       },
-      orderBy: { name: "asc" },
+      // Admins first, then alphabetical — keeps the studio owner's row on top.
+      orderBy: [{ role: "desc" }, { name: "asc" }, { email: "asc" }],
     });
 
     return NextResponse.json(
@@ -33,6 +36,7 @@ export async function GET() {
         name: u.name,
         email: u.email,
         phone: u.phone,
+        role: u.role,
         credits: u.credits + u.punchCards.reduce((s, pc) => s + pc.remainingCredits, 0),
         directCredits: u.credits,
         punchCardCredits: u.punchCards.reduce((s, pc) => s + pc.remainingCredits, 0),

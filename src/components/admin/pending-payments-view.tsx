@@ -3,7 +3,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
-import { CheckCircle2, AlertTriangle, RefreshCw, Ticket, Sparkles } from "lucide-react";
+import {
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  Ticket,
+  Sparkles,
+  X,
+  Trash2,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +41,8 @@ export function PendingPaymentsView() {
   const [payments, setPayments] = useState<PendingPayment[]>([]);
   const [registrations, setRegistrations] = useState<PendingRegistration[]>([]);
   const [loading, setLoading] = useState(true);
-  const [completing, setCompleting] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,7 +65,7 @@ export function PendingPaymentsView() {
 
   const completePayment = async (id: string) => {
     if (!confirm("לאשר את התשלום ולהוסיף את הקרדיטים למשתמש/ת?")) return;
-    setCompleting(id);
+    setBusyId(id);
     try {
       const res = await fetch(`/api/admin/payments/${id}/complete`, { method: "POST" });
       const data = await res.json();
@@ -73,13 +82,31 @@ export function PendingPaymentsView() {
     } catch {
       toast.error("פעולה נכשלה");
     } finally {
-      setCompleting(null);
+      setBusyId(null);
+    }
+  };
+
+  const rejectPayment = async (id: string) => {
+    if (!confirm("לסמן את התשלום כנכשל ולהסירו מהרשימה?")) return;
+    setBusyId(id);
+    try {
+      const res = await fetch(`/api/admin/payments/${id}/reject`, { method: "POST" });
+      if (!res.ok) {
+        toast.error("דחייה נכשלה");
+        return;
+      }
+      toast.success("התשלום סומן כנכשל");
+      await load();
+    } catch {
+      toast.error("דחייה נכשלה");
+    } finally {
+      setBusyId(null);
     }
   };
 
   const completeRegistration = async (id: string) => {
     if (!confirm("לאשר את הרישום לסדנה?")) return;
-    setCompleting(id);
+    setBusyId(id);
     try {
       const res = await fetch(`/api/admin/workshop-registrations/${id}/complete`, {
         method: "POST",
@@ -94,7 +121,56 @@ export function PendingPaymentsView() {
     } catch {
       toast.error("פעולה נכשלה");
     } finally {
-      setCompleting(null);
+      setBusyId(null);
+    }
+  };
+
+  const rejectRegistration = async (id: string) => {
+    if (!confirm("לבטל את הרישום הזה?")) return;
+    setBusyId(id);
+    try {
+      const res = await fetch(`/api/admin/workshop-registrations/${id}/reject`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        toast.error("דחייה נכשלה");
+        return;
+      }
+      toast.success("הרישום בוטל");
+      await load();
+    } catch {
+      toast.error("דחייה נכשלה");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const rejectAll = async () => {
+    const total = payments.length + registrations.length;
+    if (total === 0) return;
+    if (
+      !confirm(
+        `לנקות את כל ${total} התשלומים והרישומים התקועים? פעולה זו תסמן את כולם כנכשלים.`,
+      )
+    )
+      return;
+
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/admin/payments/reject-all", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error("הניקוי נכשל");
+        return;
+      }
+      toast.success(
+        `נוקו: ${data.payments} תשלומים, ${data.registrations} רישומי סדנאות`,
+      );
+      await load();
+    } catch {
+      toast.error("הניקוי נכשל");
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -110,15 +186,29 @@ export function PendingPaymentsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sage-600">
           <AlertTriangle className="h-5 w-5 text-amber-500" />
           <span className="text-sm font-medium">{total} פריטים ממתינים</span>
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="rounded-2xl gap-2">
-          <RefreshCw className="h-4 w-4" />
-          רענון
-        </Button>
+        <div className="flex items-center gap-2">
+          {total > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={rejectAll}
+              disabled={bulkBusy}
+              className="rounded-2xl gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+            >
+              {bulkBusy ? <Spinner className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+              ניקוי כל התקועים
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={load} className="rounded-2xl gap-2">
+            <RefreshCw className="h-4 w-4" />
+            רענון
+          </Button>
+        </div>
       </div>
 
       {total === 0 ? (
@@ -158,21 +248,37 @@ export function PendingPaymentsView() {
                           {format(new Date(p.createdAt), "d בMMMM HH:mm", { locale: he })}
                         </p>
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => completePayment(p.id)}
-                        disabled={completing !== null}
-                        className="rounded-2xl gap-2 shrink-0"
-                      >
-                        {completing === p.id ? (
-                          <Spinner className="h-4 w-4" />
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            אישור + הוספת קרדיטים
-                          </>
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => completePayment(p.id)}
+                          disabled={busyId !== null}
+                          className="rounded-2xl gap-2"
+                        >
+                          {busyId === p.id ? (
+                            <Spinner className="h-4 w-4" />
+                          ) : (
+                            <>
+                              <CheckCircle2 className="h-4 w-4" />
+                              אישור + הוספת קרדיטים
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          onClick={() => rejectPayment(p.id)}
+                          disabled={busyId !== null}
+                          className="h-9 w-9 rounded-2xl border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300"
+                          title="סמן כנכשל"
+                        >
+                          {busyId === p.id ? (
+                            <Spinner className="h-4 w-4" />
+                          ) : (
+                            <X className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -204,21 +310,37 @@ export function PendingPaymentsView() {
                           {format(new Date(r.createdAt), "d בMMMM HH:mm", { locale: he })}
                         </p>
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => completeRegistration(r.id)}
-                        disabled={completing !== null}
-                        className="rounded-2xl gap-2 shrink-0"
-                      >
-                        {completing === r.id ? (
-                          <Spinner className="h-4 w-4" />
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            אישור רישום
-                          </>
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => completeRegistration(r.id)}
+                          disabled={busyId !== null}
+                          className="rounded-2xl gap-2"
+                        >
+                          {busyId === r.id ? (
+                            <Spinner className="h-4 w-4" />
+                          ) : (
+                            <>
+                              <CheckCircle2 className="h-4 w-4" />
+                              אישור רישום
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          onClick={() => rejectRegistration(r.id)}
+                          disabled={busyId !== null}
+                          className="h-9 w-9 rounded-2xl border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300"
+                          title="בטל רישום"
+                        >
+                          {busyId === r.id ? (
+                            <Spinner className="h-4 w-4" />
+                          ) : (
+                            <X className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -13,6 +13,7 @@ interface UserRow {
   name: string | null;
   email: string;
   phone: string | null;
+  role: "STUDENT" | "ADMIN";
   credits: number;
   directCredits: number;
   punchCardCredits: number;
@@ -122,10 +123,14 @@ export function UsersManager() {
         />
       </div>
 
+      <p className="text-xs text-sage-400">
+        רשימה של כל המשתמשים שנרשמו לאתר ({users.length}) — תלמידות + מנהלות. משתמשים חדשים נוספים אוטומטית כשהם נרשמים.
+      </p>
+
       {filtered.length === 0 ? (
         <Card className="rounded-3xl">
           <CardContent className="py-12 text-center text-sage-400">
-            לא נמצאו תלמידות
+            לא נמצאו משתמשים
           </CardContent>
         </Card>
       ) : (
@@ -135,9 +140,16 @@ export function UsersManager() {
               <CardContent className="py-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sage-900 text-sm truncate">
-                      {user.name || "ללא שם"}
-                    </p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-bold text-sage-900 text-sm truncate">
+                        {user.name || "ללא שם"}
+                      </p>
+                      {user.role === "ADMIN" && (
+                        <span className="shrink-0 rounded-full border border-sage-300 bg-sage-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sage-700">
+                          מנהלת
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-sage-500 truncate">{user.email}</p>
                     <div className="flex gap-3 mt-1 text-xs text-sage-400">
                       <span>{user.totalBookings} הזמנות</span>
