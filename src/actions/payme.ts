@@ -82,9 +82,16 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
   // PayMe expects the price in agurot (ILS cents).
   const salePriceAgurot = Math.round(input.amountIls * 100);
 
+  // Detect which PayMe environment we're hitting (helps diagnose seller-id mismatch).
+  // payme.io and paymeservice.com are the same company — both domains point at the same API.
+  // - Preprod (sandbox): preprod.payme.io / preprod.paymeservice.com
+  // - Production:        ng.payme.io      / ng.paymeservice.com
+  const isPreprod = /preprod\./i.test(apiUrl);
+  const envLabel = isPreprod ? "PREPROD" : "PRODUCTION";
+
   // PayMe /api/generate-sale required fields:
   //   seller_payme_id, sale_price (in agurot), currency, product_name
-  // Docs: https://developers.paymeservice.com/
+  // Docs: https://docs.payme.io/docs/payments/86407fa137745-hosted-payment-page
   const body: Record<string, unknown> = {
     seller_payme_id: sellerUid,
     sale_price: salePriceAgurot,
@@ -102,6 +109,7 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
   };
 
   console.log("[payme-debug] request:", {
+    env: envLabel,
     apiUrl,
     sellerUidMasked: sellerUid.slice(0, 4) + "…" + sellerUid.slice(-2),
     sale_price: salePriceAgurot,
@@ -137,9 +145,10 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
       console.error("[payme] HTTP error:", res.status, paymeResponse);
       return {
         ok: false,
-        error:
+        error: `[${envLabel}] ${
           paymeResponse.status_error_details ||
-          `PayMe החזיר שגיאה (HTTP ${res.status})`,
+          `PayMe החזיר שגיאה (HTTP ${res.status})`
+        }`,
       };
     }
   } catch (err) {
@@ -152,9 +161,10 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
     console.error("[payme] sale failed:", paymeResponse);
     return {
       ok: false,
-      error:
+      error: `[${envLabel}] ${
         paymeResponse.status_error_details ||
-        `PayMe error ${paymeResponse.status_error_code}`,
+        `PayMe error ${paymeResponse.status_error_code}`
+      }`,
     };
   }
 
