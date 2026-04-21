@@ -102,11 +102,22 @@ export class BookingEngine {
             _max: { position: true },
           });
 
-          const entry = await tx.waitlistEntry.create({
-            data: {
+          // Upsert: if this user previously joined the waitlist for this class
+          // (and was EXPIRED / CANCELLED / PROMOTED), reuse the same row.
+          // Without upsert, the unique index (user_id, class_instance_id)
+          // would cause a constraint error on a retry.
+          const entry = await tx.waitlistEntry.upsert({
+            where: { userId_classInstanceId: { userId, classInstanceId } },
+            create: {
               userId,
               classInstanceId,
               position: (maxPosition._max.position ?? 0) + 1,
+            },
+            update: {
+              position: (maxPosition._max.position ?? 0) + 1,
+              status: WaitlistStatus.WAITING,
+              promotedAt: null,
+              notifiedAt: null,
             },
           });
 
@@ -130,12 +141,24 @@ export class BookingEngine {
           });
         }
 
-        const booking = await tx.booking.create({
-          data: {
+        // Upsert instead of create: a prior CANCELLED booking for the same
+        // (user, class) would otherwise trigger the unique-constraint error.
+        const booking = await tx.booking.upsert({
+          where: { userId_classInstanceId: { userId, classInstanceId } },
+          create: {
             userId,
             classInstanceId,
             status: BookingStatus.CONFIRMED,
             punchCardId,
+          },
+          update: {
+            status: BookingStatus.CONFIRMED,
+            punchCardId,
+            bookedAt: new Date(),
+            cancelledAt: null,
+            creditRefunded: false,
+            attendedAt: null,
+            markedBy: null,
           },
         });
 
@@ -267,8 +290,20 @@ export class BookingEngine {
       });
     }
 
-    await tx.booking.create({
-      data: { userId: user.id, classInstanceId, status: BookingStatus.CONFIRMED, punchCardId },
+    // Upsert: if the promoted user previously had a CANCELLED booking for
+    // this class, reuse that row instead of hitting the unique constraint.
+    await tx.booking.upsert({
+      where: { userId_classInstanceId: { userId: user.id, classInstanceId } },
+      create: { userId: user.id, classInstanceId, status: BookingStatus.CONFIRMED, punchCardId },
+      update: {
+        status: BookingStatus.CONFIRMED,
+        punchCardId,
+        bookedAt: new Date(),
+        cancelledAt: null,
+        creditRefunded: false,
+        attendedAt: null,
+        markedBy: null,
+      },
     });
 
     await tx.classInstance.update({
@@ -294,8 +329,20 @@ export class BookingEngine {
       });
       if (existing?.status === BookingStatus.CONFIRMED) throw new Error("התלמיד/ה כבר רשום/ה");
 
-      const booking = await tx.booking.create({
-        data: { userId, classInstanceId, status: BookingStatus.CONFIRMED },
+      // Upsert: a prior CANCELLED booking would otherwise cause a unique
+      // constraint failure on the (user_id, class_instance_id) index.
+      const booking = await tx.booking.upsert({
+        where: { userId_classInstanceId: { userId, classInstanceId } },
+        create: { userId, classInstanceId, status: BookingStatus.CONFIRMED },
+        update: {
+          status: BookingStatus.CONFIRMED,
+          bookedAt: new Date(),
+          cancelledAt: null,
+          creditRefunded: false,
+          attendedAt: null,
+          markedBy: null,
+          punchCardId: null,
+        },
       });
 
       await tx.classInstance.update({
