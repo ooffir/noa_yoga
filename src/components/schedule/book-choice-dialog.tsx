@@ -55,8 +55,8 @@ export function BookChoiceDialog({
   };
 
   const handlePunchCard = () => {
-    toast("מעבירים לאזור האישי לרכישת כרטיסייה…", { icon: "🎟️" });
-    router.push("/profile#credits");
+    toast("מעבירים לעמוד המחירון…", { icon: "🎟️" });
+    router.push("/pricing");
     onOpenChange(false);
   };
 
@@ -104,7 +104,7 @@ export function BookChoiceDialog({
               </div>
               <div>
                 <p className="font-bold text-sage-900">כרטיסייה של 10 שיעורים</p>
-                <p className="text-xs text-sage-500">המשתלם ביותר — מועבר/ת לאזור האישי</p>
+                <p className="text-xs text-sage-500">המשתלם ביותר — מעבר לעמוד המחירון</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
