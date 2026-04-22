@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SignOutButton } from "@clerk/nextjs";
-import { LayoutDashboard, Calendar, Users, LogOut, Home, UserCog, Newspaper, Settings, Sparkles, AlertTriangle } from "lucide-react";
+import { LayoutDashboard, Calendar, Users, LogOut, Home, UserCog, Newspaper, Settings, Sparkles, AlertTriangle, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const adminItems = [
   { href: "/admin", icon: LayoutDashboard, label: "לוח בקרה" },
+  { href: "/admin/analytics", icon: BarChart3, label: "ניתוח נתונים" },
   { href: "/admin/schedule", icon: Calendar, label: "שיעורים" },
   { href: "/admin/users", icon: UserCog, label: "תלמידות" },
   { href: "/admin/attendance", icon: Users, label: "נוכחות" },
