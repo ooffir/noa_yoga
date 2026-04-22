@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sendEmail, reminderEmail } from "@/lib/email";
+import { sendMarketingEmail, reminderEmail } from "@/lib/email";
 import { addHours, startOfDay, endOfDay } from "date-fns";
-import { formatDate, formatTime } from "@/lib/utils";
 
+/**
+ * Daily cron — 09:00. Emails students with bookings 24h from now.
+ *
+ * Reminders are considered "marketing" in our opt-in model: they respect
+ * `user.receiveEmails`. Students who opted out won't be reminded.
+ */
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -30,28 +35,34 @@ export async function GET(req: Request) {
     });
 
     let sent = 0;
+    let skipped = 0;
     for (const booking of bookings) {
       const ci = booking.classInstance;
-      const email = reminderEmail(
-        booking.user.name || "Student",
-        ci.classDefinition.title,
-        formatDate(ci.date),
-        formatTime(ci.startTime)
-      );
+      const [hh, mm] = ci.startTime.split(":").map(Number);
+      const classDateTime = new Date(ci.date);
+      classDateTime.setHours(hh, mm, 0, 0);
 
-      await sendEmail({
-        to: booking.user.email,
-        subject: email.subject,
-        html: email.html,
+      const { subject, html } = reminderEmail({
+        name: booking.user.name || "תלמידה יקרה",
+        className: ci.classDefinition.title,
+        date: classDateTime,
+        startTime: ci.startTime,
       });
-      sent++;
+
+      if (booking.user.receiveEmails) {
+        await sendMarketingEmail(
+          { email: booking.user.email, receiveEmails: booking.user.receiveEmails },
+          { subject, html },
+        );
+        sent++;
+      } else {
+        skipped++;
+      }
     }
 
-    return NextResponse.json({ sent });
+    return NextResponse.json({ sent, skipped, total: bookings.length });
   } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to send reminders" },
-      { status: 500 }
-    );
+    console.error("[cron/reminders] failed:", error);
+    return NextResponse.json({ error: "Failed to send reminders" }, { status: 500 });
   }
 }

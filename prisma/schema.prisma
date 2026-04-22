@@ -82,6 +82,11 @@ model User {
   hasSignedHealthDeclaration Boolean   @default(false) @map("has_signed_health_declaration")
   healthDeclSignedAt         DateTime? @map("health_decl_signed_at") @db.Timestamptz(6)
 
+  // Marketing / operational emails opt-out. Transactional emails (payment
+  // receipts, account emails) always bypass this flag per Israeli consumer
+  // law — receipts for a paid transaction must be sent.
+  receiveEmails Boolean @default(true) @map("receive_emails")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -304,8 +309,9 @@ model SiteSettings {
   aboutSubtitle   String  @default("") @map("about_subtitle")
   aboutContent    String  @default("") @map("about_content")
   profileImageUrl String? @map("profile_image_url")
-  creditPrice     Int     @default(50) @map("credit_price")
-  punchCardPrice  Int     @default(350) @map("punch_card_price")
+  creditPrice        Int @default(50) @map("credit_price")
+  punchCardPrice     Int @default(350) @map("punch_card_price")
+  cancellationWindow Int @default(6) @map("cancellation_window")
 
   @@map("site_settings")
 }

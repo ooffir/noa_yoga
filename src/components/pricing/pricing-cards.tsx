@@ -17,9 +17,14 @@ import {
 interface Props {
   creditPrice: number;
   punchCardPrice: number;
+  cancellationHours?: number;
 }
 
-export function PricingCards({ creditPrice, punchCardPrice }: Props) {
+export function PricingCards({
+  creditPrice,
+  punchCardPrice,
+  cancellationHours = 6,
+}: Props) {
   const { isSignedIn } = useUser();
   const router = useRouter();
   const [pendingType, setPendingType] = useState<CreditPurchaseType | null>(null);
@@ -40,7 +45,7 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
       features: [
         "קרדיט לשיעור אחד",
         "הרשמה לכל שיעור פנוי",
-        "ביטול חינם עד 6 שעות לפני",
+        `ביטול חינם עד ${cancellationHours} שעות לפני`,
       ],
       highlighted: false,
     },
@@ -52,7 +57,7 @@ export function PricingCards({ creditPrice, punchCardPrice }: Props) {
       features: [
         "10 קרדיטים לשיעורים",
         "הרשמה לכל שיעור פנוי",
-        "ביטול חינם עד 6 שעות לפני",
+        `ביטול חינם עד ${cancellationHours} שעות לפני`,
         ...(savings > 0 ? [`חיסכון של ₪${savings} לעומת שיעורים בודדים`] : []),
       ],
       highlighted: true,

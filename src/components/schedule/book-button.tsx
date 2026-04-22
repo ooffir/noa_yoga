@@ -18,6 +18,7 @@ interface BookButtonProps {
   classStartTime?: string;
   creditPrice?: number;
   punchCardPrice?: number;
+  cancellationHoursBefore?: number;
 }
 
 function buildGoogleCalendarUrl(event: {
@@ -49,6 +50,7 @@ export function BookButton({
   classStartTime,
   creditPrice = 50,
   punchCardPrice = 350,
+  cancellationHoursBefore = 6,
 }: BookButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -174,6 +176,7 @@ export function BookButton({
           classTitle={classTitle || "השיעור"}
           classDate={classDate}
           classStartTime={classStartTime}
+          cancellationHoursBefore={cancellationHoursBefore}
         />
       )}
     </>

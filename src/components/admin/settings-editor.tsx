@@ -31,6 +31,7 @@ export function SettingsEditor() {
   const [cardsSubheading, setCardsSubheading] = useState("");
   const [creditPrice, setCreditPrice] = useState(50);
   const [punchCardPrice, setPunchCardPrice] = useState(350);
+  const [cancellationWindow, setCancellationWindow] = useState(6);
   const [aboutTitle, setAboutTitle] = useState("נעים להכיר");
   const [aboutSubtitle, setAboutSubtitle] = useState("");
   const [aboutContent, setAboutContent] = useState("");
@@ -55,6 +56,7 @@ export function SettingsEditor() {
       if (settings.cardsSubheading != null) setCardsSubheading(settings.cardsSubheading);
       if (settings.creditPrice != null) setCreditPrice(settings.creditPrice);
       if (settings.punchCardPrice != null) setPunchCardPrice(settings.punchCardPrice);
+      if (settings.cancellationWindow != null) setCancellationWindow(settings.cancellationWindow);
       if (settings.aboutTitle) setAboutTitle(settings.aboutTitle);
       if (settings.aboutSubtitle) setAboutSubtitle(settings.aboutSubtitle);
       if (settings.aboutContent) setAboutContent(settings.aboutContent);
@@ -98,7 +100,7 @@ export function SettingsEditor() {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCardPrice, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
+        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCardPrice, cancellationWindow, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
       });
       if (!res.ok) { toast.error("שמירה נכשלה"); return; }
       toast.success("ההגדרות נשמרו");
@@ -180,6 +182,30 @@ export function SettingsEditor() {
           <div>
             <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר כרטיסייה (₪)</label>
             <Input type="number" min={0} value={punchCardPrice} onChange={(e) => setPunchCardPrice(parseInt(e.target.value) || 0)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── מדיניות ביטול ── */}
+      <Card className="rounded-3xl">
+        <CardHeader><CardTitle>מדיניות ביטול</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              חלון ביטול (בשעות)
+            </label>
+            <Input
+              type="number"
+              min={0}
+              max={168}
+              value={cancellationWindow}
+              onChange={(e) => setCancellationWindow(parseInt(e.target.value) || 0)}
+            />
+            <p className="mt-2 text-xs text-sage-500 leading-relaxed">
+              משתמשות שיבטלו את הרישום עד {cancellationWindow} שעות לפני השיעור
+              יקבלו החזר קרדיט אוטומטי. ביטולים מאוחרים יותר — ללא החזר.
+              הערך הזה מוצג גם לתלמידות בעמוד מערכת השעות.
+            </p>
           </div>
         </CardContent>
       </Card>

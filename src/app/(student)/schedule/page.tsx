@@ -2,6 +2,7 @@ import { requireAuth } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { format, startOfWeek, addDays, addWeeks } from "date-fns";
 import { he } from "date-fns/locale";
 import { BookButton } from "@/components/schedule/book-button";
@@ -9,6 +10,21 @@ import { Clock, MapPin, User, ChevronRight, ChevronLeft, CalendarDays } from "lu
 import { toUTCDate } from "@/lib/utils";
 
 export const revalidate = 60;
+
+export const metadata: Metadata = {
+  title: "מערכת שעות",
+  description:
+    "מערכת השעות השבועית של Noa Yogis — הרשמה אונליין לשיעורי יוגה, רשימת המתנה לשיעורים מלאים וביטול חינם בתוך חלון הזמן המוגדר.",
+  alternates: { canonical: "/schedule" },
+  openGraph: {
+    title: "מערכת שעות | Noa Yogis",
+    description:
+      "הזמינו מקום לשיעור הבא שלכם או הצטרפו לרשימת המתנה — הכל במקום אחד.",
+    url: "/schedule",
+    type: "website",
+    images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "מערכת שעות" }],
+  },
+};
 
 interface Props {
   searchParams: Promise<{ week?: string }>;
@@ -72,12 +88,13 @@ export default async function SchedulePage({ searchParams }: Props) {
     }),
     prisma.siteSettings.findUnique({
       where: { id: "main" },
-      select: { creditPrice: true, punchCardPrice: true },
+      select: { creditPrice: true, punchCardPrice: true, cancellationWindow: true },
     }).catch(() => null),
   ]);
 
   const creditPrice = settings?.creditPrice ?? 50;
   const punchCardPrice = settings?.punchCardPrice ?? 350;
+  const cancellationHours = settings?.cancellationWindow ?? 6;
 
   const bookedSet = new Set(userBookings.map((b) => b.classInstanceId));
   const waitlistSet = new Set(userWaitlist.map((w) => w.classInstanceId));
@@ -102,8 +119,8 @@ export default async function SchedulePage({ searchParams }: Props) {
       <div className="mb-6 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-sage-900">מערכת שעות</h1>
-          <p className="mt-1 text-sm text-sage-500">
-            הזמינו מקום או הצטרפו לרשימת המתנה
+          <p className="mt-1 text-sm text-sage-500 leading-relaxed">
+            ניתן לבטל עד {cancellationHours} שעות לפני השיעור ולקבל קרדיט חזרה.
           </p>
           <p className="text-sm text-sage-500 mt-0.5">
             {format(weekStart, "d בMMMM", { locale: he })} – {format(addDays(weekStart, 6), "d בMMMM yyyy", { locale: he })}
@@ -205,6 +222,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
                               punchCardPrice={punchCardPrice}
+                              cancellationHoursBefore={cancellationHours}
                             />
                           ) : isOnWaitlist ? (
                             <span className="text-xs text-amber-600 font-medium whitespace-nowrap">ברשימת המתנה</span>
@@ -218,6 +236,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
                               punchCardPrice={punchCardPrice}
+                              cancellationHoursBefore={cancellationHours}
                             />
                           ) : (
                             <BookButton
@@ -229,6 +248,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
                               punchCardPrice={punchCardPrice}
+                              cancellationHoursBefore={cancellationHours}
                             />
                           )}
                         </div>

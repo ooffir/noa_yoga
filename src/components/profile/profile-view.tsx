@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog";
+import { EmailPreferencesCard } from "@/components/profile/email-preferences-card";
 
 interface BookingData {
   id: string;
@@ -36,6 +37,8 @@ interface ProfileViewProps {
   directCredits: number;
   punchCardCredits: number;
   punchCards: PunchCardData[];
+  cancellationHoursBefore?: number;
+  receiveEmails: boolean;
 }
 
 export function ProfileView({
@@ -46,6 +49,8 @@ export function ProfileView({
   directCredits,
   punchCardCredits,
   punchCards,
+  cancellationHoursBefore = 6,
+  receiveEmails,
 }: ProfileViewProps) {
   return (
     <div className="space-y-6">
@@ -115,7 +120,12 @@ export function ProfileView({
           ) : (
             <div className="space-y-3">
               {upcomingBookings.map((booking) => (
-                <BookingRow key={booking.id} booking={booking} canCancel />
+                <BookingRow
+                  key={booking.id}
+                  booking={booking}
+                  canCancel
+                  cancellationHoursBefore={cancellationHoursBefore}
+                />
               ))}
             </div>
           )}
@@ -142,11 +152,22 @@ export function ProfileView({
           )}
         </CardContent>
       </Card>
+
+      {/* העדפות תקשורת */}
+      <EmailPreferencesCard initialValue={receiveEmails} />
     </div>
   );
 }
 
-function BookingRow({ booking, canCancel }: { booking: BookingData; canCancel?: boolean }) {
+function BookingRow({
+  booking,
+  canCancel,
+  cancellationHoursBefore = 6,
+}: {
+  booking: BookingData;
+  canCancel?: boolean;
+  cancellationHoursBefore?: number;
+}) {
   const [cancelOpen, setCancelOpen] = useState(false);
   const ci = booking.classInstance;
 
@@ -184,6 +205,7 @@ function BookingRow({ booking, canCancel }: { booking: BookingData; canCancel?: 
           classTitle={ci.classDefinition.title}
           classDate={ci.date}
           classStartTime={ci.startTime}
+          cancellationHoursBefore={cancellationHoursBefore}
         />
       )}
     </>

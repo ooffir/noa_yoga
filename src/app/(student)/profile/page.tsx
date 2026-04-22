@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function ProfilePage() {
   const dbUser = await requireAuth();
 
-  const [upcomingBookings, pastBookings, punchCards] = await Promise.all([
+  const [upcomingBookings, pastBookings, punchCards, settings] = await Promise.all([
     prisma.booking.findMany({
       where: {
         userId: dbUser.id,
@@ -30,10 +30,15 @@ export default async function ProfilePage() {
       where: { userId: dbUser.id, status: "ACTIVE" },
       orderBy: { purchasedAt: "asc" },
     }),
+    prisma.siteSettings.findUnique({
+      where: { id: "main" },
+      select: { cancellationWindow: true },
+    }).catch(() => null),
   ]);
 
   const punchCardCredits = punchCards.reduce((sum, pc) => sum + pc.remainingCredits, 0);
   const totalCredits = dbUser.credits + punchCardCredits;
+  const cancellationHoursBefore = settings?.cancellationWindow ?? 6;
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
@@ -46,6 +51,8 @@ export default async function ProfilePage() {
         directCredits={dbUser.credits}
         punchCardCredits={punchCardCredits}
         punchCards={JSON.parse(JSON.stringify(punchCards))}
+        cancellationHoursBefore={cancellationHoursBefore}
+        receiveEmails={dbUser.receiveEmails ?? true}
       />
     </div>
   );

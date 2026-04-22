@@ -1,7 +1,10 @@
 import { db } from "@/lib/db";
-import { sendEmail, waitlistPromotionEmail } from "@/lib/email";
-import { format } from "date-fns";
-import { he } from "date-fns/locale";
+import {
+  sendMarketingEmail,
+  waitlistPromotionEmail,
+  bookingConfirmationEmail,
+} from "@/lib/email";
+import { getCancellationWindowHours } from "@/lib/site-settings";
 
 const BookingStatus = { CONFIRMED: "CONFIRMED", CANCELLED: "CANCELLED", NO_SHOW: "NO_SHOW" } as const;
 const WaitlistStatus = { WAITING: "WAITING", PROMOTED: "PROMOTED", EXPIRED: "EXPIRED", CANCELLED: "CANCELLED" } as const;
@@ -10,28 +13,30 @@ const PunchCardStatus = { ACTIVE: "ACTIVE", EXHAUSTED: "EXHAUSTED", EXPIRED: "EX
 interface PromotedUserInfo {
   email: string;
   name: string | null;
+  receiveEmails: boolean;
   className: string;
   classDate: Date;
   startTime: string;
 }
 
 /**
- * Fire-and-forget email dispatch after a transaction commits.
- * Failures are logged but don't propagate — the booking itself has
- * already been finalized in the DB.
+ * Fire-and-forget waitlist-promotion email dispatch.
+ * Uses sendMarketingEmail — skips if the user opted out via `receiveEmails`.
+ * Failures are logged but don't propagate; the booking is already committed.
  */
 function dispatchPromotionEmail(info: PromotedUserInfo | null) {
   if (!info) return;
   try {
-    const dateStr = format(info.classDate, "EEEE, d בMMMM yyyy", { locale: he });
-    const { subject, html } = waitlistPromotionEmail(
-      info.name || "תלמידה יקרה",
-      info.className,
-      dateStr,
-      info.startTime,
-    );
-    // Do not await — keeps API response fast.
-    sendEmail({ to: info.email, subject, html }).catch((err) => {
+    const { subject, html } = waitlistPromotionEmail({
+      name: info.name || "תלמידה יקרה",
+      className: info.className,
+      date: info.classDate,
+      startTime: info.startTime,
+    });
+    sendMarketingEmail(
+      { email: info.email, receiveEmails: info.receiveEmails },
+      { subject, html },
+    ).catch((err) => {
       console.error("[booking] promotion email failed:", err?.message || err);
     });
   } catch (err) {
@@ -39,9 +44,47 @@ function dispatchPromotionEmail(info: PromotedUserInfo | null) {
   }
 }
 
+interface BookingConfirmationInfo {
+  email: string;
+  name: string | null;
+  receiveEmails: boolean;
+  className: string;
+  classDate: Date;
+  startTime: string;
+  cancellationHours: number;
+}
+
+/**
+ * Fire-and-forget booking confirmation. Marketing email — respects opt-out.
+ */
+function dispatchBookingConfirmationEmail(info: BookingConfirmationInfo | null) {
+  if (!info) return;
+  try {
+    const { subject, html } = bookingConfirmationEmail({
+      name: info.name || "תלמידה יקרה",
+      className: info.className,
+      date: info.classDate,
+      startTime: info.startTime,
+      cancellationHours: info.cancellationHours,
+    });
+    sendMarketingEmail(
+      { email: info.email, receiveEmails: info.receiveEmails },
+      { subject, html },
+    ).catch((err) => {
+      console.error("[booking] confirmation email failed:", err?.message || err);
+    });
+  } catch (err) {
+    console.error("[booking] confirmation email build failed:", err);
+  }
+}
+
 export class BookingEngine {
   static async bookClass(userId: string, classInstanceId: string) {
-    return await db.$transaction(
+    // Grab the current cancellation window BEFORE opening the tx so the email
+    // reflects the current policy value that the user saw at booking time.
+    const cancellationHours = await getCancellationWindowHours();
+
+    const result = await db.$transaction(
       async (tx) => {
         const classInstance = await tx.classInstance.findUnique({
           where: { id: classInstanceId },
@@ -167,13 +210,51 @@ export class BookingEngine {
           data: { currentBookings: { increment: 1 } },
         });
 
-        return { type: "booking" as const, booking };
+        // Capture what the post-commit email dispatch needs. Doing the user
+        // lookup inside the tx guarantees we have the right email/name
+        // even if the user record is modified concurrently.
+        const confirmationInfo: BookingConfirmationInfo = {
+          email: user.email,
+          name: user.name,
+          receiveEmails: user.receiveEmails,
+          className: classInstance.classDefinition.title,
+          classDate: new Date(classInstance.date),
+          startTime: classInstance.startTime,
+          cancellationHours,
+        };
+
+        return {
+          type: "booking" as const,
+          booking,
+          confirmationInfo,
+        };
       },
       { isolationLevel: "Serializable", timeout: 10000 }
     );
+
+    // Email fires AFTER the DB transaction commits so SMTP problems can't
+    // roll back the booking. Only sent for actual bookings — waitlist
+    // entries are acknowledged via toast but have no dedicated email.
+    if (result.type === "booking" && "confirmationInfo" in result) {
+      dispatchBookingConfirmationEmail(result.confirmationInfo);
+    }
+
+    // Strip the confirmationInfo before handing the result back to callers
+    // — they don't need it and exposing it complicates their types.
+    if (result.type === "booking" && "confirmationInfo" in result) {
+      const { confirmationInfo: _omit, ...rest } = result;
+      void _omit;
+      return rest;
+    }
+    return result;
   }
 
   static async cancelBooking(userId: string, bookingId: string) {
+    // Read the admin-controlled cancellation window ONCE before opening the
+    // transaction — avoids holding the serializable tx while we hit the
+    // site_settings table and keeps the hot path predictable.
+    const cancellationHours = await getCancellationWindowHours();
+
     const { refunded, promotedUser } = await db.$transaction(
       async (tx) => {
         const booking = await tx.booking.findUnique({
@@ -188,7 +269,6 @@ export class BookingEngine {
         if (booking.userId !== userId) throw new Error("אין הרשאה");
         if (booking.status !== BookingStatus.CONFIRMED) throw new Error("ההזמנה לא פעילה");
 
-        const cancellationHours = Number(process.env.CANCELLATION_HOURS_BEFORE) || 6;
         const [hours, minutes] = booking.classInstance.startTime.split(":").map(Number);
         const classDateTime = new Date(booking.classInstance.date);
         classDateTime.setHours(hours, minutes, 0, 0);
@@ -232,6 +312,7 @@ export class BookingEngine {
           ? {
               email: promoted.user.email,
               name: promoted.user.name,
+              receiveEmails: promoted.user.receiveEmails,
               className: promoted.classInstance.classDefinition.title,
               classDate: new Date(promoted.classInstance.date),
               startTime: promoted.classInstance.startTime,
@@ -378,6 +459,7 @@ export class BookingEngine {
         ? {
             email: promoted.user.email,
             name: promoted.user.name,
+            receiveEmails: promoted.user.receiveEmails,
             className: promoted.classInstance.classDefinition.title,
             classDate: new Date(promoted.classInstance.date),
             startTime: promoted.classInstance.startTime,

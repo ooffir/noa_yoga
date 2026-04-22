@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import type { Metadata } from "next";
 import { Show, UserButton } from "@clerk/nextjs";
 import {
   Wind, Heart, ArrowLeft, Flower2, Sun, Leaf, Sparkles,
@@ -32,6 +33,30 @@ function getIcon(name: string) {
 // Admin edits go live instantly — no build-time caching, no stale ISR snapshot.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+// Per-page metadata — overrides the root layout defaults. Shows up in
+// browser tabs, Google search results, and WhatsApp / Facebook link previews.
+export const metadata: Metadata = {
+  title: "Noa Yogis | סטודיו יוגה של נועה אופיר",
+  description:
+    "סטודיו יוגה בחיפה בהנחיית נועה אופיר — שיעורי Vinyasa ו-Hatha, כרטיסיות חודשיות, סדנאות ותכני השראה. הרשמה אונליין בלחיצת כפתור.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "Noa Yogis | סטודיו יוגה",
+    description:
+      "שיעורי יוגה, כרטיסיות וסדנאות — כל התרגול שלך במקום אחד. הרשמה אונליין מהירה.",
+    url: "/",
+    type: "website",
+    images: [
+      {
+        url: "/yoga-pose.png",
+        width: 1200,
+        height: 630,
+        alt: "Noa Yogis — סטודיו יוגה",
+      },
+    ],
+  },
+};
 
 function InstagramBrandIcon() {
   return (

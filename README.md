@@ -1,419 +1,246 @@
 # Noa Yogis
 
-A Hebrew-first, RTL yoga studio platform built with Next.js 16, Clerk, Prisma, and Supabase. Features class scheduling, bookings with credits, workshops, an internal blog/magazine, and a fully dynamic admin-managed homepage.
+A **Sage & Silk** yoga studio management system — Hebrew-first, RTL, mobile-ready. Students browse the weekly schedule, purchase credits or punch-cards via PayMe, book classes, join waitlists, and register for workshops. The studio owner manages everything from a single admin dashboard.
+
+Built with a strict "single source of truth" philosophy: every student-facing surface (schedule, pricing, cancel dialog, receipt email) reads from the same `SiteSettings` row so the admin's changes propagate everywhere in seconds.
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Framework | Next.js 16.2.1 (App Router, Turbopack) + TypeScript |
-| Auth | Clerk v7 (Hebrew localization via `heIL`) |
-| Database | Supabase PostgreSQL + Prisma 5.22 |
-| Styling | Tailwind CSS 3.4 |
-| UI Components | Radix UI (Dialog, Slot) |
-| Icons | lucide-react (named imports only) |
-| Validation | Zod |
-| Payments | PayMe (Israeli payment provider — sole gateway) |
-| Email | Nodemailer (implemented but using placeholder SMTP credentials) |
-| Webhooks | Svix (Clerk webhook verification) |
+| Layer | Choice |
+|---|---|
+| Framework | **Next.js 16** (App Router, Turbopack, RSC) |
+| Language | **TypeScript** |
+| Database | **Supabase PostgreSQL** (Frankfurt) via **Prisma 5** |
+| Auth | **Clerk v7** (Hebrew localization, email + Google) |
+| Payments | **PayMe** ([payme.io](https://payme.io)) — hosted payment page + server-to-server verification |
+| Email | **Nodemailer** — 4 Hebrew RTL templates with opt-out toggle |
+| UI | **Tailwind CSS 3.4** + Radix Dialog + custom sage palette |
+| Charts | **Recharts** (admin analytics) |
+| Hosting | **Vercel** (Edge middleware + Cron jobs) |
 
-## All Routes (41 total)
+## Key Features
 
-### Public (no auth required)
-
-| Route | Description |
-|-------|-------------|
-| `/` | Landing page (dynamic hero, feature cards, about me, social links) |
-| `/sign-in` | Clerk sign-in (catch-all) |
-| `/sign-up` | Clerk sign-up (catch-all) |
-| `/articles` | Magazine / blog listing |
-| `/articles/[slug]` | Individual article reader |
-| `/workshops` | Workshops listing with registration |
-
-### Student (requires sign-in)
-
-| Route | Description |
-|-------|-------------|
-| `/schedule` | Weekly class schedule with booking |
-| `/profile` | Personal area — credits, booking history |
-| `/pricing` | Purchase credits or punch cards (dynamic prices from admin) |
-| `/payments/success` | Post-payment confirmation |
-
-### Admin (requires admin role)
-
-| Route | Description |
-|-------|-------------|
-| `/admin` | Dashboard — stats, revenue, popular classes |
-| `/admin/schedule` | Create/edit/cancel classes (recurring + one-time) |
-| `/admin/users` | Manage students and credits |
-| `/admin/attendance` | Mark attendance per class |
-| `/admin/workshops` | Create/edit workshops |
-| `/admin/articles` | Create/edit blog articles with image upload |
-| `/admin/settings` | Edit homepage content, pricing, about me |
-
-### API Routes (24 endpoints)
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/bookings` | Book a class (credits or punch card) |
-| `POST /api/bookings/[id]/cancel` | Cancel booking with refund logic |
-| — | Workshop registration is handled by the `generatePaymeSaleForWorkshop` server action (`src/actions/payme.ts`); the old `POST /api/workshops/register` route has been removed |
-| `GET /api/schedule` | Public schedule data |
-| `GET /api/user/credits` | User credit balance |
-| `GET/POST /api/admin/schedule` | Admin class CRUD |
-| `GET/PUT/DELETE /api/admin/schedule/[id]` | Edit/deactivate class definition |
-| `PATCH /api/admin/instances/[id]` | Cancel individual class instance |
-| `GET/PATCH /api/admin/users` | List students / update credits |
-| `GET/POST /api/admin/articles` | Article CRUD |
-| `PUT/DELETE /api/admin/articles/[id]` | Edit/delete article |
-| `GET/POST /api/admin/workshops` | Workshop CRUD |
-| `PUT/DELETE /api/admin/workshops/[id]` | Edit/deactivate workshop |
-| `GET/PUT /api/admin/settings` | Site settings (hero, about, pricing) |
-| `GET/PUT /api/admin/feature-cards` | Homepage feature cards |
-| `POST /api/admin/upload` | Image upload (Supabase Storage or base64) |
-| `GET /api/admin/dashboard` | Dashboard statistics |
-| `POST /api/admin/students/[id]` | Admin add/remove student from class |
-| `GET/POST /api/admin/attendance/[instanceId]` | Attendance data + marking |
-| `POST /api/webhooks/clerk` | Clerk user sync webhook |
-| — | Credit / punch-card purchases handled by the `generatePaymeSaleForCredits` server action (`src/actions/payme.ts`) |
-| `POST /api/webhooks/payme` | PayMe IPN webhook — handles **both** workshop registrations and credit/punch-card payments via `custom_1` prefix (`wsr:` / `pay:`) |
-| `GET /api/cron/generate-instances` | Auto-generate class instances |
-| `GET /api/cron/reminders` | Send reminder emails |
-
-## Database Models (13 total)
-
-| Model | Purpose |
-|-------|---------|
-| User | Students + admins (synced from Clerk via `clerkId`) |
-| ClassDefinition | Recurring/one-time class templates |
-| ClassInstance | Specific class on a specific date |
-| Booking | Student → ClassInstance registration |
-| WaitlistEntry | Waitlist with auto-promotion |
-| PunchCard | 10-class credit cards |
-| Payment | PayMe payment records (credits / punch-card purchases) |
-| Article | Internal blog posts with slug routing |
-| Workshop | Standalone paid events |
-| WorkshopRegistration | Workshop signups (separate from class credits) |
-| SiteSettings | Homepage content, pricing config |
-| FeatureCard | Dynamic homepage value cards |
-| Account/Session/VerificationToken | Legacy NextAuth tables (kept for schema compat) |
-
-## Admin Access
-
-Admin users are defined in `src/lib/admin.ts`:
-- `omer609994@gmail.com`
-- `noa6660011@gmail.com`
-
-New admin emails can be added to the `ADMIN_EMAILS` array. Users are auto-promoted to admin on first sign-in.
-
-## Booking Logic
-
-1. Check `user.credits` (admin-assigned direct credits)
-2. If 0, check active punch cards (FIFO — oldest first)
-3. If class is full, add to waitlist (auto-promoted when spot opens)
-4. If no credits at all, show "לתשלום והרשמה" link to `/pricing`
-5. Workshops bypass the credit system entirely — separate registration flow
-
-Cancellation refunds credit if cancelled 6+ hours before class (configurable via `CANCELLATION_HOURS_BEFORE`).
-
-## Dynamic Admin Settings
-
-The admin can configure from `/admin/settings`:
-- Hero title and subtitle
-- Feature cards heading and subtitle
-- Feature cards (up to 6, with icon selection)
-- About Me section (title, subtitle, bio text, profile image)
-- **Pricing**: single credit price and punch card price (reflected on `/pricing`)
-
-## Performance Optimizations
-
-### Caching
-
-| Page | Strategy |
-|------|----------|
-| Homepage `/` | ISR `revalidate = 3600` |
-| Schedule `/schedule` | ISR `revalidate = 60` + `unstable_cache` with tag `schedule` |
-| Articles `/articles` | ISR `revalidate = 60` |
-| Workshops `/workshops` | ISR `revalidate = 60` |
-| Pricing `/pricing` | ISR `revalidate = 60` |
-| Admin pages | `force-dynamic` with `<Suspense>` skeletons |
-
-### Auth
-
-- `auth()` — instant JWT decode (no network call)
-- User lookup by indexed `clerkId` column
-- `currentUser()` only called once on first sign-in
-- `React.cache()` deduplicates within a request
-- Navbar gets user data as props — zero independent DB calls
-
-### Bundle
-
-- Named imports only for lucide-react (no `import *`)
-- Unused Radix packages removed (7 packages)
-- `next.config.js`: `compress: true`, `poweredByHeader: false`
-- Static asset cache: `max-age=31536000, immutable`
-- Image cache: `minimumCacheTTL: 3600`
-
-### Database
-
-- Prisma singleton pattern
-- PgBouncer connection pooling (`connection_limit=5, pool_timeout=30`)
-- Indexes on `clerkId`, `email`, `date`, `status`, `role`, `slug`
-
-## PayMe & Email Status
-
-**PayMe**: Sole payment gateway for both workshops and credit/punch-card purchases. The integration uses PayMe's hosted-payment-page API (`/api/generate-sale`). Every sale passes a `custom_1` prefix that the IPN webhook uses to dispatch to the correct handler:
-
-- `wsr:<registrationId>` → updates a `WorkshopRegistration`
-- `pay:<paymentId>` → updates a `Payment` and atomically creates the `PunchCard` with the purchased credits
-
-To activate:
-1. Create a PayMe merchant account at https://www.paymeservice.com
-2. Set `PAYME_SELLER_UID`, `PAYME_API_URL`, and `NEXT_PUBLIC_SITE_URL` in `.env` / Vercel
-3. In the PayMe dashboard, set the IPN/callback URL to: `https://yourdomain.com/api/webhooks/payme` (the URL is also sent per-request; dashboard value is a fallback)
-4. Prices are configured dynamically from Admin Settings (`/admin/settings`)
-
-**Nodemailer**: Email sending is implemented (booking confirmations, waitlist promotions, reminders). The SMTP credentials are placeholders. To activate:
-1. Set real SMTP credentials in `.env`
-2. Update `EMAIL_FROM` to the studio's email address
+- **🧘 Weekly schedule** with real-time booking, auto-promote from waitlist, 6-hour-before cancel window (admin-configurable)
+- **💳 Credits system** — single-class or 10-class punch cards, FIFO consumption, atomic transactions prevent double-booking
+- **🎟️ Workshop registration** — separate ticketing with its own capacity + cancel rules
+- **✉️ Automated emails** — Hebrew RTL templates for receipt, booking confirmation, waitlist promotion, 24h reminder. Transactional emails always send; marketing emails respect per-user opt-out (`receiveEmails` flag)
+- **📊 Admin analytics** — demand heat-map, weekly revenue, utilization rate, top students with most-active hour
+- **⚖️ Legal pages** — Terms, Privacy, Refund Policy (PayMe-compliance ready), dynamic cancellation window synced across all surfaces
+- **🔒 RLS-locked DB** — Supabase anon/authenticated roles have zero privileges; only Prisma (postgres role) can read/write
+- **🕐 Vercel Cron** — daily cleanup of stuck payments + daily class reminders
 
 ## Environment Variables
 
-```env
-# Database (Supabase)
-DATABASE_URL=postgresql://...?pgbouncer=true&connection_limit=5&pool_timeout=30
-DIRECT_URL=postgresql://...
+Copy `.env.example` to `.env` for local development. On Vercel, set these under **Project Settings → Environment Variables**. Every variable here is required unless marked optional.
 
-# Clerk
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
-CLERK_SECRET_KEY=
-CLERK_WEBHOOK_SECRET=
+```bash
+# ─── Database (Supabase) ───
+DATABASE_URL="postgresql://postgres.<ref>:<password>@<pooler-host>:6543/postgres?pgbouncer=true&connection_limit=5&pool_timeout=30"
+DIRECT_URL="postgresql://postgres.<ref>:<password>@<host>:5432/postgres"
 
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+# ─── Clerk (auth) ───
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_live_..."
+CLERK_SECRET_KEY="sk_live_..."
+CLERK_WEBHOOK_SECRET="whsec_..."
 
-# PayMe (sole payment gateway)
-PAYME_SELLER_UID=
-PAYME_API_URL=https://preprod.paymeservice.com/api/generate-sale
-NEXT_PUBLIC_SITE_URL=https://yourdomain.com
+# ─── Site ───
+NEXT_PUBLIC_SITE_URL="https://noa-yoga.vercel.app"   # no trailing slash
 
-# Email (SMTP)
-SMTP_HOST=
+# ─── PayMe (payments) ───
+PAYME_SELLER_UID="MPL12345-..."
+PAYME_API_URL="https://live.payme.io/api/generate-sale"
+# For testing: https://sandbox.payme.io/api/generate-sale
+
+# ─── Email (SMTP) ───
+SMTP_HOST="smtp.gmail.com"
 SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-EMAIL_FROM=
+SMTP_USER="studio-email@gmail.com"
+SMTP_PASS="<gmail-app-password>"
+EMAIL_FROM="Noa Yogis <studio-email@gmail.com>"
 
-# Optional: Supabase Storage
-SUPABASE_SERVICE_ROLE_KEY=
+# ─── Cron (Vercel) ───
+CRON_SECRET="<any long random string>"
 
-# Config
-CANCELLATION_HOURS_BEFORE=6
-PUNCH_CARD_CREDITS=10
-
-# Cron (for /api/cron/* endpoints)
-CRON_SECRET=
+# ─── Optional ───
+SUPABASE_SERVICE_ROLE_KEY=""   # enables Supabase Storage uploads for admin images; falls back to base64 if unset
 ```
 
-## File Reference
+### Vars that are referenced in code
 
-Every file in the project, grouped by area. **Context** = where it lives / what layer it belongs to. **Target** = what it does / who consumes it.
+| Where | Variable | Purpose |
+|---|---|---|
+| `src/lib/prisma.ts` | `DATABASE_URL` | Runtime pool, every Prisma query |
+| `src/app/api/webhooks/clerk` | `CLERK_WEBHOOK_SECRET` | Svix signature verification on user sync |
+| `src/actions/payme.ts` + `src/lib/payme-verify.ts` | `PAYME_SELLER_UID`, `PAYME_API_URL`, `NEXT_PUBLIC_SITE_URL` | Sale creation + IPN verification |
+| `src/lib/email.ts` | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | Nodemailer transport |
+| `src/app/api/cron/*` | `CRON_SECRET` | Bearer token that gates all three cron routes |
+| `src/app/api/admin/upload` | `SUPABASE_SERVICE_ROLE_KEY` | Optional — enables Supabase Storage upload path |
 
-### Root configuration
+## Admin Access
 
-| File | Context | Target |
-|------|---------|--------|
-| `next.config.js` | Build config | Next.js config — image remote domains (Supabase Storage), compression, cache headers, disables `x-powered-by` |
-| `tsconfig.json` | Build config | TypeScript compiler options and path aliases (`@/*` → `src/*`) |
-| `package.json` | Build config | Dependencies, versions, `npm` scripts (`dev`, `build`, `db:push`, `db:seed`, `db:studio`) |
-| `postcss.config.js` | Build config | PostCSS pipeline for Tailwind + autoprefixer |
-| `tailwind.config.ts` | Build config | Tailwind theme — brand color palette (earthy green / cream), Varela Round font, custom animations |
-| `.env` | Secrets | Runtime env: DB URLs (Supabase Frankfurt), Clerk keys, PayMe credentials, SMTP, cron secret |
-| `full_site_backup.json` | Backup artifact | Latest JSON snapshot of all tables — used as source for one-off imports/restores |
-| `README.md` | Docs | This file |
+Admin privileges are granted automatically by email. The whitelist lives in `src/lib/admin.ts`:
 
-### Prisma (database)
+```ts
+export const ADMIN_EMAILS = [
+  "omer609994@gmail.com",
+  "noa6660011@gmail.com",
+] as const;
+```
 
-| File | Context | Target |
-|------|---------|--------|
-| `prisma/schema.prisma` | ORM schema | Single source of truth for all 13 models, indexes, relations, `@map` snake_case table names |
-| `prisma/seed.ts` | Seed script | Populates dev DB with demo classes/users (`npm run db:seed`) |
-| `prisma/reset-and-create.sql` | Manual SQL | Emergency "drop + create" SQL script to run in Supabase SQL Editor if Prisma push fails |
+When a user signs up through Clerk, `getSharedUser()` in `src/lib/auth-helpers.ts` checks their email against this list and sets `role: "ADMIN"` on the new DB row — no manual DB edit required. To add a new admin later: edit the array and redeploy.
 
-### Scripts
+## Admin Setup Guide (for Noa)
 
-| File | Context | Target |
-|------|---------|--------|
-| `scripts/backup-db.ts` | Maintenance | Exports every table to `full_site_backup.json` — run before schema migrations or region changes |
+The admin dashboard lives at **`/admin`** and requires an admin-whitelisted email to access.
 
-### App shell & routing
+### Daily / weekly tasks
 
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/layout.tsx` | Root layout | HTML shell: `<ClerkProvider>` with `heIL` locale, `dir="rtl"`, `lang="he"`, Varela Round font, global metadata |
-| `src/app/globals.css` | Global CSS | Tailwind layers, RTL base rules, `.hide-scrollbar`, `.prose-article` rich-text styles |
-| `src/app/page.tsx` | Public route `/` | Landing page — dynamic hero, feature cards, About Me, social links; uses `<Suspense>` so shell ships instantly |
-| `src/proxy.ts` | Middleware | Clerk `clerkMiddleware` — protects `/admin/*`, `/profile`, `/schedule` (renamed from `middleware.ts` for Next 16) |
+| Task | Where | Notes |
+|---|---|---|
+| **Add a new class** | `/admin/schedule` → "שיעור חדש" | Choose recurring or one-off. Recurring classes auto-generate instances 12 weeks ahead. |
+| **Cancel a single occurrence** | `/admin/schedule` → click class → "ביטול" | Only this date; doesn't affect future recurring instances. |
+| **Mark attendance** | `/admin/attendance` → pick date → check boxes | Saves the `attendedAt` timestamp on each booking. |
+| **Add / remove credits manually** | `/admin/users` → +/- buttons or type exact number | Use this for cash payments or goodwill refunds. |
+| **Publish a magazine article** | `/admin/articles` | Auto-generates slug, stores image in Supabase Storage (or base64 fallback). |
+| **Create a workshop** | `/admin/workshops` | Separate ticketing; payments fund the workshop directly, not the credit system. |
+| **Review stuck payments** | `/admin/payments` → "תשלומים תקועים" tab | Manual approve/reject for any payment that didn't auto-complete via webhook. |
+| **View revenue + demand** | `/admin/analytics` | Weekly income, fill rate, top slots, most active students. |
 
-### Authentication pages
+### Global site settings
 
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/sign-in/[[...sign-in]]/page.tsx` | Public route `/sign-in` | Clerk `<SignIn>` catch-all, centered, Hebrew labels |
-| `src/app/sign-up/[[...sign-up]]/page.tsx` | Public route `/sign-up` | Clerk `<SignUp>` catch-all |
+Go to **`/admin/settings`** to edit:
 
-### Student-facing pages (`(student)` route group)
+| Setting | Default | Effect |
+|---|---|---|
+| Hero title / subtitle | — | Homepage H1 + lede |
+| Feature cards heading + 6 cards | — | Homepage "why practice with us" section |
+| About section | — | Homepage bio + photo |
+| **Credit price** | ₪50 | Single-class tier on `/pricing` |
+| **Punch-card price** | ₪350 | 10-class tier on `/pricing` |
+| **Cancellation window (hours)** | 6 | Refund-eligible window for class cancellations — reflected on schedule page, pricing bullets, cancel dialog, booking engine, receipt emails |
 
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/(student)/layout.tsx` | Layout | Fetches user + credits once, renders `<NavbarServer>` inside `<Suspense>` for all student routes |
-| `src/app/(student)/schedule/page.tsx` | Route `/schedule` | Weekly class grid, week navigation with RTL-flipped arrows, `unstable_cache` tagged `schedule` |
-| `src/app/(student)/schedule/loading.tsx` | Route segment | Skeleton shown while schedule data resolves |
-| `src/app/(student)/profile/page.tsx` | Route `/profile` | Personal area — current credits, booking history, active punch cards |
-| `src/app/(student)/pricing/page.tsx` | Route `/pricing` | Renders `<PricingCards>` with prices pulled dynamically from `SiteSettings` |
-| `src/app/(student)/payments/success/page.tsx` | Route `/payments/success` | Post-payment confirmation screen; reads `?payment=<id>`, looks up the `Payment` in DB and shows success / pending / failed banner |
-| `src/app/(student)/articles/page.tsx` | Route `/articles` | Magazine listing grid — image + title + excerpt, links to `[slug]` |
-| `src/app/(student)/articles/[slug]/page.tsx` | Route `/articles/[slug]` | Individual article reader; `generateMetadata` for SEO; decodes Hebrew slug |
-| `src/app/(student)/workshops/page.tsx` | Route `/workshops` | Workshops listing with `<RegisterButton>` per card |
-
-### Admin pages (`(admin)` route group)
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/(admin)/layout.tsx` | Layout | Guards with `requireAdmin()`, renders `<Navbar>` + `<AdminSidebar>` (sticky sub-nav) |
-| `src/app/(admin)/admin/loading.tsx` | Route segment | Skeleton shown while admin data resolves |
-| `src/app/(admin)/admin/page.tsx` | Route `/admin` | Dashboard shell with `<DashboardView>` inside `<Suspense>` |
-| `src/app/(admin)/admin/schedule/page.tsx` | Route `/admin/schedule` | Hosts `<ScheduleBuilder>` — create/edit/cancel recurring & one-off classes |
-| `src/app/(admin)/admin/users/page.tsx` | Route `/admin/users` | Hosts `<UsersManager>` — list students, adjust credits |
-| `src/app/(admin)/admin/attendance/page.tsx` | Route `/admin/attendance` | Hosts `<AttendanceView>` — mark who showed up per class instance |
-| `src/app/(admin)/admin/workshops/page.tsx` | Route `/admin/workshops` | Hosts `<WorkshopsManager>` — create/edit workshops + image upload |
-| `src/app/(admin)/admin/articles/page.tsx` | Route `/admin/articles` | Hosts `<ArticlesManager>` — rich-text editor + image upload |
-| `src/app/(admin)/admin/settings/page.tsx` | Route `/admin/settings` | Hosts `<SettingsEditor>` — hero, feature cards, about, pricing |
-
-### API routes — public & student
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/api/schedule/route.ts` | `GET` | Public weekly class instances feed |
-| `src/app/api/bookings/route.ts` | `POST` | Book a class — validates credits/punch card, enforces capacity, adds to waitlist, sends confirmation email |
-| `src/app/api/bookings/[id]/cancel/route.ts` | `POST` | Cancel booking; refunds credit if ≥ `CANCELLATION_HOURS_BEFORE` hours before class; auto-promotes waitlist |
-| `src/actions/payme.ts` | Server Action | `generatePaymeSaleForWorkshop()` — creates a PENDING `WorkshopRegistration` and returns a PayMe hosted-payment URL (replaces the old `/api/workshops/register` route) |
-| `src/app/api/user/credits/route.ts` | `GET` | Returns the signed-in user's credit balance (used by navbar badge) |
-
-### API routes — admin
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/api/admin/dashboard/route.ts` | `GET` | Aggregated stats: revenue, bookings this week, popular classes |
-| `src/app/api/admin/schedule/route.ts` | `GET/POST` | List class definitions / create new (recurring or one-off) |
-| `src/app/api/admin/schedule/[id]/route.ts` | `GET/PUT/DELETE` | Edit or soft-delete a class definition |
-| `src/app/api/admin/instances/[id]/route.ts` | `PATCH` | Cancel a single occurrence without deleting the recurring definition |
-| `src/app/api/admin/users/route.ts` | `GET/PATCH` | List students / update credits balance |
-| `src/app/api/admin/students/[id]/route.ts` | `POST` | Admin manually adds or removes a student from a specific class instance |
-| `src/app/api/admin/attendance/[instanceId]/route.ts` | `GET/POST` | Load roster for a class instance and save attendance marks |
-| `src/app/api/admin/articles/route.ts` | `GET/POST` | List articles / create (auto-generates slug from title) |
-| `src/app/api/admin/articles/[id]/route.ts` | `PUT/DELETE` | Edit or delete an article; invalidates `/articles` cache |
-| `src/app/api/admin/workshops/route.ts` | `GET/POST` | List / create workshops |
-| `src/app/api/admin/workshops/[id]/route.ts` | `PUT/DELETE` | Edit or deactivate a workshop |
-| `src/app/api/admin/settings/route.ts` | `GET/PUT` | Read/update `SiteSettings` singleton (hero, about, pricing) |
-| `src/app/api/admin/feature-cards/route.ts` | `GET/PUT` | Replace-all save of homepage feature cards |
-| `src/app/api/admin/upload/route.ts` | `POST` | Image upload — Supabase Storage if `SUPABASE_SERVICE_ROLE_KEY` set, otherwise base64 data URL |
-
-### API routes — payments & webhooks
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/actions/payme.ts` | Server Action | Exposes `generatePaymeSaleForWorkshop(workshopId)` and `generatePaymeSaleForCredits(type)` — creates PENDING DB rows and returns a PayMe hosted-payment URL |
-| `src/app/api/webhooks/payme/route.ts` | `POST` | PayMe IPN callback — parses `custom_1` prefix (`wsr:` / `pay:`) to dispatch. On success: flips `WorkshopRegistration` to `COMPLETED` **or** flips `Payment` to `COMPLETED` + creates a `PunchCard` atomically |
-| `src/app/api/webhooks/clerk/route.ts` | `POST` | Svix-verified Clerk webhook — syncs `user.created`/`updated` to DB, assigns `ADMIN` role by email |
-
-### API routes — cron
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/app/api/cron/generate-instances/route.ts` | `GET` | Auto-generates the next 12 weeks of `ClassInstance`s from recurring `ClassDefinition`s (runs weekly) |
-| `src/app/api/cron/reminders/route.ts` | `GET` | Sends reminder emails 24h before each booked class (runs hourly) |
-
-### Components — layout
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/components/layout/navbar.tsx` | Shared UI | Sticky top navbar, horizontal-scroll on mobile, RTL flex, `<UserButton>` or auth links — receives `isAdmin`/`credits` as props (no DB calls) |
-| `src/components/layout/navbar-server.tsx` | Server wrapper | Async Server Component that fetches user + credits once per request and forwards props to `<Navbar>` |
-| `src/components/layout/admin-sidebar.tsx` | Admin UI | Secondary sticky tab bar under the main navbar with active-state highlight |
-
-### Components — admin (client forms)
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/components/admin/dashboard-view.tsx` | Client | Fetches `/api/admin/dashboard`, renders KPI cards with graceful empty-state |
-| `src/components/admin/schedule-builder.tsx` | Client | Full CRUD form for classes (teacher, date, time, location, capacity, recurring) — inline dialogs to avoid focus-loss bug |
-| `src/components/admin/users-manager.tsx` | Client | Students table with add/remove credits per row |
-| `src/components/admin/attendance-view.tsx` | Client | Per-class roster with check-in toggles |
-| `src/components/admin/workshops-manager.tsx` | Client | Workshop CRUD with Supabase image upload |
-| `src/components/admin/articles-manager.tsx` | Client | Article CRUD with file-upload preview and rich content field |
-| `src/components/admin/settings-editor.tsx` | Client | Tabbed editor for hero / about / feature cards / pricing; writes to `/api/admin/settings` and `/api/admin/feature-cards` |
-
-### Components — student
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/components/schedule/book-button.tsx` | Client | Booking CTA — handles "Book", "Cancel", "Pay & Book", and waitlist states |
-| `src/components/pricing/pricing-cards.tsx` | Client | Two pricing cards (single / punch card) — calls the `generatePaymeSaleForCredits` server action and redirects to PayMe |
-| `src/components/workshops/register-button.tsx` | Client | Workshop registration + payment trigger |
-| `src/components/profile/profile-view.tsx` | Client | Personal area — credits, upcoming bookings, history, active punch cards |
-
-### Components — UI primitives
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/components/ui/button.tsx` | Design system | Button with `class-variance-authority` variants (primary, ghost, outline, sizes) |
-| `src/components/ui/card.tsx` | Design system | `Card`, `CardHeader`, `CardContent`, `CardFooter` rounded containers |
-| `src/components/ui/badge.tsx` | Design system | Status pill (success / warning / info / neutral) |
-| `src/components/ui/dialog.tsx` | Design system | Radix Dialog wrapper with RTL-aware close button |
-| `src/components/ui/input.tsx` | Design system | Text input with consistent focus ring + RTL padding |
-| `src/components/ui/loading.tsx` | Design system | `<LoadingSpinner>` and skeleton placeholders |
-
-### Library (`src/lib`)
-
-| File | Context | Target |
-|------|---------|--------|
-| `src/lib/prisma.ts` | DB | Prisma client singleton (prevents dev hot-reload from exhausting pool) |
-| `src/lib/db.ts` | DB | Re-exports `prisma` under the `db` alias used across the codebase |
-| `src/lib/auth-helpers.ts` | Auth | `getSharedUser()` — cached, indexed `clerkId` lookup; `requireAuth()`, `requireAdmin()` guards with `console.time` tracing |
-| `src/lib/get-db-user.ts` | Auth | Thin wrapper that reuses `getSharedUser()` (kept for backwards compat) |
-| `src/lib/admin.ts` | Auth | `ADMIN_EMAILS` array + `isAdminEmail(email)` helper — single source for admin list |
-| `src/lib/booking-engine.ts` | Domain | Serializable Prisma transaction for booking: capacity check, credit deduction, waitlist add, refund on cancel |
-| `src/lib/schedule-service.ts` | Domain | Recurring-class expansion (generates `ClassInstance`s for a date range) |
-| `src/lib/validations.ts` | Validation | Zod schemas for all API inputs (booking, class CRUD, settings, etc.) |
-| `src/lib/email.ts` | Integration | Nodemailer transport — booking confirmation, waitlist promotion, class reminder templates |
-| `src/actions/payme.ts` | Integration | PayMe client + two server actions: `generatePaymeSaleForWorkshop()` and `generatePaymeSaleForCredits()`. Uses `custom_1` prefix (`wsr:` / `pay:`) to correlate IPN callbacks |
-| `src/lib/utils.ts` | Helpers | `cn()` for Tailwind class merging + small date/formatting helpers |
+All settings save to a single `SiteSettings` row (`id = "main"`) and trigger a `revalidatePath` on affected routes, so changes are visible on the public site within seconds.
 
 ## Local Development
 
 ```bash
+# 1. Clone + install
+git clone <repo-url>
+cd yoga
 npm install
+
+# 2. Copy env template and fill in values
+cp .env.example .env
+# Edit .env — fill DATABASE_URL, Clerk keys, PayMe keys (sandbox), SMTP (optional for dev)
+
+# 3. Push the schema to your Supabase DB
+npx prisma db push
+
+# 4. Start dev server
+npm run dev
+```
+
+Visit `http://localhost:3000`. Sign up with an admin email (see `src/lib/admin.ts`) to get the admin dashboard.
+
+### Useful commands
+
+```bash
+npm run dev          # Turbopack dev server (fast HMR)
+npm run build        # Production build (runs prisma generate first)
+npm run lint         # ESLint
+npx prisma generate  # Regenerate Prisma client after schema changes
+npx prisma db push   # Sync schema → Supabase (additive, safe)
+npx prisma studio    # GUI browser for the DB
+```
+
+### Windows tip
+
+Prisma holds a lock on `query_engine-windows.dll` while the dev server is running. Before `npx prisma generate` or `db push`:
+
+```powershell
+Get-Process -Name node | Stop-Process -Force
+```
+
+Then run the Prisma command, then `npm run dev` again.
+
+## Deployment (Vercel)
+
+1. Push the repo to GitHub / GitLab.
+2. Connect on Vercel → framework detected as Next.js.
+3. Set **all environment variables** from the list above (Production + Preview).
+4. Deploy.
+
+### Cron jobs (configured in `vercel.json`)
+
+| Route | Schedule | Purpose |
+|---|---|---|
+| `/api/cron/cleanup-pending-payments` | `0 3 * * *` (03:00 daily) | Marks PENDING payments/registrations older than 2 hours as FAILED |
+| `/api/cron/reminders` | `0 9 * * *` (09:00 daily) | Emails students about classes 24h from now |
+
+Hobby plan supports 2 cron jobs, daily frequency max. On Pro, change to hourly in `vercel.json`. Trigger manually:
+
+```bash
+curl https://<domain>/api/cron/cleanup-pending-payments \
+  -H "Authorization: Bearer <CRON_SECRET>"
+```
+
+### Schema changes (Prisma)
+
+When editing `prisma/schema.prisma`:
+
+```bash
+# 1. Locally — regenerate client + push to Supabase (additive, non-destructive)
 npx prisma generate
 npx prisma db push
-npm run dev
+
+# 2. Commit + push to Git
+git push
+
+# 3. Vercel rebuilds. The `postinstall` hook auto-runs prisma generate,
+#    so the client stays in sync with what's in your committed schema.
 ```
 
-If Turbopack cache gets corrupted:
+For destructive changes (dropping columns, renaming), take a backup first:
 
 ```bash
-Remove-Item -Recurse -Force .next   # PowerShell
-rm -rf .next                         # macOS/Linux
-npm run dev
+npx tsx scripts/backup-db.ts   # writes full_site_backup.json
 ```
 
-## Useful Commands
+## Privacy, Legal, and Email Opt-out
 
-```bash
-npm run dev          # Start dev server
-npm run build        # Production build
-npm run lint         # ESLint
-npx prisma generate  # Regenerate Prisma client
-npx prisma db push   # Sync schema to database
-npx prisma studio    # Database browser
-```
+- **`/terms`** (תקנון ותנאי שימוש) — studio liability, health declaration, membership rules
+- **`/privacy`** (מדיניות פרטיות) — GDPR/Israeli Privacy Law 1981 compliant disclosure
+- **`/refund-policy`** (מדיניות ביטולים) — uses the admin-controlled cancellation window dynamically
+
+Each user has a `receiveEmails` flag (default `true`) toggled from `/profile`. Marketing emails (booking confirmations, waitlist promotions, reminders) respect this flag. **Payment receipts always send** — required by Israeli consumer law regardless of the user's preference.
+
+## Key File Reference
+
+| Path | Purpose |
+|---|---|
+| `src/lib/site-settings.ts` | Single source of truth helper for `cancellationWindow` |
+| `src/lib/booking-engine.ts` | All booking, cancel, and waitlist-promotion logic (serializable transactions) |
+| `src/lib/payments.ts` | Payment completion helpers (idempotent, fires receipts) |
+| `src/lib/payme-verify.ts` | Server-to-server IPN verification — prevents forged webhooks |
+| `src/lib/email.ts` | 4 Hebrew RTL templates + transactional/marketing split |
+| `src/lib/admin.ts` | Admin email whitelist |
+| `src/actions/payme.ts` | Server actions that generate PayMe sale URLs |
+| `src/app/api/webhooks/payme` | PayMe IPN webhook (dispatches by `custom_1` prefix) |
+| `src/app/api/admin/analytics` | Single endpoint returning all dashboard data in parallel |
+| `prisma/schema.prisma` | Full DB schema (15 models) |
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "Invalid `DATABASE_URL`" | Vercel env var wrapped in literal quotes | Re-enter without quotes in Vercel UI |
+| "Internal Server Error" on `/schedule` | Stale `.next` cache after dependency install | `Remove-Item -Recurse -Force .next && npm run dev` |
+| PayMe returns "Seller not found" | Seller ID belongs to production but API URL is sandbox (or vice versa) | Match `PAYME_SELLER_UID` to the `PAYME_API_URL` environment |
+| "Failed to fetch" on dashboard | Admin role missing on user DB row | Sign out → sign in again; or manually set `role = 'ADMIN'` in Supabase Table Editor |
+| No emails arriving | Gmail App Password not set, or SMTP_* env vars missing | Enable 2FA on the Gmail account → generate App Password → set `SMTP_PASS` on Vercel |
+| Prisma "DLL locked" on Windows | Dev server still running | `Get-Process -Name node \| Stop-Process -Force` then retry |
+| Webhook-verified payments sit PENDING | Stuck in PayMe retry queue | `/admin/payments` → click "אישור + הוספת קרדיטים" to approve manually |
+
+## License
+
+Private project — all rights reserved to Noa Ofir.

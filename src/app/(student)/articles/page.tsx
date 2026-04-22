@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Newspaper } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 
 export const revalidate = 60;
 
@@ -38,13 +39,14 @@ export default async function ArticlesPage() {
               href={`/articles/${article.slug}`}
               className="group block overflow-hidden rounded-3xl border border-sage-100 bg-white shadow-sm transition-all hover:shadow-md active:scale-[0.99]"
             >
-              <div className="aspect-video w-full overflow-hidden bg-sage-50">
+              <div className="relative aspect-video w-full overflow-hidden bg-sage-50">
                 {article.imageUrl ? (
-                  <img
+                  <Image
                     src={article.imageUrl}
                     alt={article.title}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    loading="lazy"
+                    fill
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    className="object-cover transition-transform duration-300 group-hover:scale-105"
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center">

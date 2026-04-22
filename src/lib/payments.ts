@@ -1,11 +1,17 @@
 import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
+import { paymentReceiptEmail, sendTransactionalEmail } from "@/lib/email";
 
 /**
  * Payment completion helpers — shared by the PayMe webhook and the
  * post-payment /payments/success return-URL handler.
  *
  * All functions are idempotent — running twice has no extra effect.
+ *
+ * Receipts: every successful Payment triggers a transactional receipt
+ * email via `sendTransactionalEmail`, which BYPASSES the user's
+ * `receiveEmails` opt-out flag. Per Israeli consumer law, receipts for
+ * paid transactions must always be delivered.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,7 +33,10 @@ export async function completePaymentSuccess(
   paymentId: string,
   paymeSaleCode?: string | null,
 ): Promise<CompletePaymentResult> {
-  const payment = await db.payment.findUnique({ where: { id: paymentId } });
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    include: { user: { select: { email: true, name: true } } },
+  });
   if (!payment) {
     console.warn("[payments] completePaymentSuccess: payment not found:", paymentId);
     return { kind: "not_found" };
@@ -74,6 +83,27 @@ export async function completePaymentSuccess(
     revalidatePath("/schedule");
   } catch {}
 
+  // Fire-and-forget transactional receipt. Always sent — bypasses the
+  // user's `receiveEmails` opt-out per consumer-law obligations.
+  try {
+    const productLabel =
+      payment.type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
+    const amountIls = payment.amount / 100; // amount stored in agurot
+    const txId = paymeSaleCode ?? payment.paymentPageUid ?? payment.id;
+    const { subject, html } = paymentReceiptEmail({
+      name: payment.user.name || "תלמידה יקרה",
+      productLabel,
+      amountIls,
+      date: new Date(),
+      transactionId: txId,
+    });
+    sendTransactionalEmail({ to: payment.user.email, subject, html }).catch(
+      (err) => console.error("[payments] receipt email failed:", err),
+    );
+  } catch (err) {
+    console.error("[payments] receipt email build failed:", err);
+  }
+
   console.log("[payments] completePaymentSuccess OK:", paymentId, `+${credits} credits`);
   return { kind: "completed", paymentId, credits };
 }
@@ -100,7 +130,13 @@ export type CompleteWorkshopResult =
 export async function completeWorkshopSuccess(
   registrationId: string,
 ): Promise<CompleteWorkshopResult> {
-  const reg = await db.workshopRegistration.findUnique({ where: { id: registrationId } });
+  const reg = await db.workshopRegistration.findUnique({
+    where: { id: registrationId },
+    include: {
+      user: { select: { email: true, name: true } },
+      workshop: { select: { title: true, price: true } },
+    },
+  });
   if (!reg) return { kind: "not_found" };
 
   if (reg.paymentStatus === "COMPLETED") {
@@ -115,6 +151,22 @@ export async function completeWorkshopSuccess(
   try {
     revalidatePath("/workshops");
   } catch {}
+
+  // Fire-and-forget transactional receipt (always sent, bypasses opt-out).
+  try {
+    const { subject, html } = paymentReceiptEmail({
+      name: reg.user.name || "תלמידה יקרה",
+      productLabel: `סדנה: ${reg.workshop.title}`,
+      amountIls: reg.workshop.price,
+      date: new Date(),
+      transactionId: reg.id,
+    });
+    sendTransactionalEmail({ to: reg.user.email, subject, html }).catch((err) =>
+      console.error("[payments] workshop receipt email failed:", err),
+    );
+  } catch (err) {
+    console.error("[payments] workshop receipt email build failed:", err);
+  }
 
   console.log("[payments] completeWorkshopSuccess OK:", registrationId);
   return { kind: "completed", registrationId };

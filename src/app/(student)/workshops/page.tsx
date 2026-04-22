@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import Image from "next/image";
 import { Sparkles, CalendarDays, Clock, CheckCircle2, XCircle, Clock3 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
@@ -167,13 +168,14 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                 key={workshop.id}
                 className="flex flex-col overflow-hidden rounded-3xl border border-sage-100 bg-white shadow-sm transition-shadow hover:shadow-md"
               >
-                <div className="aspect-video w-full overflow-hidden bg-sage-50">
+                <div className="relative aspect-video w-full overflow-hidden bg-sage-50">
                   {workshop.imageUrl ? (
-                    <img
+                    <Image
                       src={workshop.imageUrl}
                       alt={workshop.title}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
+                      fill
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      className="object-cover"
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center">

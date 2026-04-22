@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 
@@ -45,11 +46,16 @@ export default async function ArticlePage({ params }: Props) {
     <div className="min-h-screen bg-sand-50">
       {article.imageUrl && (
         <div className="mx-auto max-w-5xl px-5 pt-6">
-          <img
-            src={article.imageUrl}
-            alt={article.title}
-            className="h-64 w-full rounded-3xl object-cover shadow-sm sm:h-80 md:h-96"
-          />
+          <div className="relative h-64 w-full overflow-hidden rounded-3xl shadow-sm sm:h-80 md:h-96">
+            <Image
+              src={article.imageUrl}
+              alt={article.title}
+              fill
+              sizes="(max-width: 1024px) 100vw, 1024px"
+              className="object-cover"
+              priority
+            />
+          </div>
         </div>
       )}
 
