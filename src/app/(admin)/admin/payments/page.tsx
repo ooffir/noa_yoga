@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { requireAdmin } from "@/lib/auth-helpers";
-import { PendingPaymentsView } from "@/components/admin/pending-payments-view";
+import { PaymentsView } from "@/components/admin/payments-view";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +10,10 @@ export default async function AdminPaymentsPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-sage-900">תשלומים תקועים</h1>
+        <h1 className="text-2xl font-bold text-sage-900">תשלומים</h1>
         <p className="mt-1 text-sm text-sage-500">
-          רשימת תשלומים ורישומים שממתינים לאישור מחברת הסליקה. במקרה שה-webhook
-          לא הגיע, ניתן לאשר ידנית — המערכת תוסיף את הקרדיטים או תאשר את ההרשמה.
+          ניהול כל פעילות התשלומים — תשלומים הממתינים לאישור ידני (webhook שלא הגיע)
+          והיסטוריית התשלומים שהושלמו.
         </p>
       </div>
 
@@ -24,7 +24,7 @@ export default async function AdminPaymentsPage() {
           </div>
         }
       >
-        <PendingPaymentsView />
+        <PaymentsView />
       </Suspense>
     </div>
   );

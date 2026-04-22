@@ -12,18 +12,24 @@ interface NavbarProps {
  *   Mobile (< md): single horizontally-scrollable row — every element flows
  *   inline with `gap-1.5`, no flex-1, so the row simply overflows and scrolls.
  *
- *   Desktop (≥ md): classic 3-column layout — logo anchored right (RTL),
- *   nav links centered via `md:flex-1 md:justify-center`, user/auth
- *   actions anchored left. The responsive utilities only kick in at md+,
- *   so mobile behavior is completely preserved.
+ *   Desktop (≥ md): **three equal-width CSS grid columns**, so the nav
+ *   group sits in the exact geometric center of the viewport regardless
+ *   of how wide the logo or action groups are. `flex-1` alone would only
+ *   center nav between the logo and the actions, pulling the nav off the
+ *   true viewport center whenever those two sides are asymmetric.
+ *
+ *   `justify-self-*` places each group at its cell edge:
+ *     - logo  → start (right in RTL)
+ *     - nav   → center (dead middle of viewport)
+ *     - auth  → end (left in RTL)
  */
 export function Navbar({ isAdmin = false, totalCredits = 0 }: NavbarProps) {
   return (
     <header dir="rtl" className="sticky top-0 z-[100] w-full border-b border-sage-100 bg-[#FDFBF7]">
       <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
-        <div className="flex min-w-full items-center gap-1.5 px-4 py-2.5 md:mx-auto md:max-w-7xl md:gap-2 md:px-8">
+        <div className="flex min-w-full items-center gap-1.5 px-4 py-2.5 md:mx-auto md:grid md:max-w-7xl md:grid-cols-3 md:gap-2 md:px-8">
           {/* ── Logo group (right side in RTL) ── */}
-          <div className="flex shrink-0 items-center gap-2 pl-2">
+          <div className="flex shrink-0 items-center gap-2 pl-2 md:justify-self-start">
             <Link
               href="/"
               className="flex items-center gap-2 text-sage-800"
@@ -37,8 +43,8 @@ export function Navbar({ isAdmin = false, totalCredits = 0 }: NavbarProps) {
             <span className="hidden h-5 w-px shrink-0 bg-sage-200 md:block" />
           </div>
 
-          {/* ── Nav links — centered on desktop, inline on mobile ── */}
-          <nav className="flex items-center gap-1.5 md:flex-1 md:justify-center md:gap-2">
+          {/* ── Nav links — centered on desktop via grid, inline on mobile ── */}
+          <nav className="flex items-center gap-1.5 md:justify-self-center md:gap-2">
             <Link href="/" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
               <Home className="h-4 w-4" />
               <span className="hidden sm:inline">עמוד הבית</span>
@@ -61,7 +67,7 @@ export function Navbar({ isAdmin = false, totalCredits = 0 }: NavbarProps) {
           </nav>
 
           {/* ── Actions group (left side in RTL) ── */}
-          <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 md:gap-2 md:justify-self-end">
             <Show when="signed-in">
               <Link href="/profile" className="flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-medium text-sage-600 transition-colors hover:bg-sage-50 active:bg-sage-100">
                 <CircleUserRound className="h-4 w-4" />
