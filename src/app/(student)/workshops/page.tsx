@@ -49,13 +49,13 @@ export default async function WorkshopsPage({ searchParams }: Props) {
           if (verification.ok) {
             await completeWorkshopSuccess(sp.registration);
           } else {
-            console.warn(
+            console.error(
               "[workshops] URL success claim failed verification:",
               verification,
             );
           }
         } else {
-          console.warn(
+          console.error(
             "[workshops] success claim has no sale code, skipping self-heal",
           );
         }

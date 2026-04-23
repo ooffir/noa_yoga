@@ -82,10 +82,16 @@ Admin privileges are granted automatically by email. The whitelist lives in `src
 
 ```ts
 export const ADMIN_EMAILS = [
-  "omer609994@gmail.com",
-  "noa6660011@gmail.com",
+  "noayogaa@gmail.com",    // primary — studio owner
+  "omer609994@gmail.com",  // secondary — support + maintenance
 ] as const;
 ```
+
+> **Important:** this whitelist only controls **who is promoted to ADMIN on first signup**. It does not retroactively change existing DB rows. To change an existing user's role, run an `UPDATE` on the `users` table in Supabase:
+>
+> ```sql
+> UPDATE public.users SET role = 'STUDENT' WHERE email = 'old-admin@example.com';
+> ```
 
 When a user signs up through Clerk, `getSharedUser()` in `src/lib/auth-helpers.ts` checks their email against this list and sets `role: "ADMIN"` on the new DB row — no manual DB edit required. To add a new admin later: edit the array and redeploy.
 

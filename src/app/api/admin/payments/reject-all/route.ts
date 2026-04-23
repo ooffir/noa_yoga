@@ -30,11 +30,8 @@ export async function POST() {
     }),
   ]);
 
-  console.log("[payments] bulk reject:", {
-    payments: payments.count,
-    registrations: registrations.count,
-  });
-
+  // Counts are returned in the HTTP response body for UI confirmation;
+  // no additional server log needed.
   return NextResponse.json({
     ok: true,
     payments: payments.count,

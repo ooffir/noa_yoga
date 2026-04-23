@@ -29,8 +29,17 @@ interface PendingPayment {
   userEmail: string;
   userName: string | null;
   amount: number;
-  type: "SINGLE_CLASS" | "PUNCH_CARD";
+  type: "SINGLE_CLASS" | "PUNCH_CARD_5" | "PUNCH_CARD";
   createdAt: string;
+}
+
+// Import the shared short-label helper so the admin tables always stay in
+// sync with the pricing page + receipt emails. (Kept as a dynamic import
+// alternative shape to avoid an extra top-level import for one helper.)
+function shortLabel(type: string): string {
+  if (type === "PUNCH_CARD") return "כרטיסיית 10";
+  if (type === "PUNCH_CARD_5") return "כרטיסיית 5";
+  return "שיעור בודד";
 }
 
 interface PendingRegistration {
@@ -427,8 +436,7 @@ function PendingSection(props: {
                           {p.userName || p.userEmail}
                         </p>
                         <p className="text-xs text-sage-500 truncate">
-                          {p.userEmail} · {p.type === "PUNCH_CARD" ? "כרטיסיית 10" : "שיעור בודד"}{" "}
-                          · ₪{(p.amount / 100).toFixed(2)} ·{" "}
+                          {p.userEmail} · {shortLabel(p.type)} · ₪{(p.amount / 100).toFixed(2)} ·{" "}
                           {format(new Date(p.createdAt), "d בMMMM HH:mm", { locale: he })}
                         </p>
                       </div>

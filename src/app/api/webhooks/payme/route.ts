@@ -63,23 +63,13 @@ async function parseBody(req: Request): Promise<PaymePayload> {
 export async function POST(req: Request) {
   const payload = await parseBody(req);
 
-  // Log EVERY webhook call with full payload. Crucial for diagnosing
-  // "payment succeeded but no credits" reports.
-  console.log("[payme-webhook] received:", {
-    fields: Object.keys(payload),
-    custom_1: payload.custom_1,
-    payme_status: payload.payme_status,
-    status: payload.status,
-    status_code: payload.status_code,
-    payme_sale_code: payload.payme_sale_code,
-    sale_code: payload.sale_code,
-  });
-
   const custom1 = payload.custom_1 || payload.customId1 || payload["custom.1"];
   const resolved = resolveCustomRef(custom1);
 
   if (!resolved) {
-    console.warn("[payme-webhook] unrecognized custom_1:", custom1);
+    // Unrecognized custom_1 means either a forged/spam IPN or a PayMe
+    // feature we don't handle — surface as error so Vercel logs pick it up.
+    console.error("[payme-webhook] unrecognized custom_1:", custom1);
     return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
   }
 
@@ -95,7 +85,9 @@ export async function POST(req: Request) {
   let verifiedSuccess = false;
   if (claimedSuccess) {
     if (!paymeSaleCode) {
-      console.warn("[payme-webhook] success claim missing payme_sale_code — rejecting");
+      // Success claim without a PayMe sale code is malformed — either a bug
+      // on PayMe's side or a forged request. Either way, reject loudly.
+      console.error("[payme-webhook] success claim missing payme_sale_code — rejecting");
       return NextResponse.json(
         { error: "missing payme_sale_code" },
         { status: 400 },
@@ -103,7 +95,6 @@ export async function POST(req: Request) {
     }
 
     const verification = await verifyPaymeSale(paymeSaleCode);
-    console.log("[payme-webhook] verification:", verification);
 
     if (verification.ok) {
       verifiedSuccess = true;
@@ -115,7 +106,7 @@ export async function POST(req: Request) {
       // Can't reach PayMe / transient error → return 500 so PayMe retries
       // later. Better than silently dropping a real payment. PayMe's
       // retry cadence is forgiving (minutes → hours).
-      console.warn(
+      console.error(
         "[payme-webhook] verify transient failure, asking PayMe to retry:",
         verification,
       );
@@ -127,21 +118,13 @@ export async function POST(req: Request) {
       // not_successful / seller_mismatch / missing_sale_code →
       // this is either a forged IPN or a payment that didn't truly capture.
       // Reject with 401 and do NOT grant credits.
-      console.warn("[payme-webhook] verification rejected:", verification);
+      console.error("[payme-webhook] verification rejected:", verification);
       return NextResponse.json(
         { error: "verification failed", reason: verification.reason },
         { status: 401 },
       );
     }
   }
-
-  console.log("[payme-webhook] dispatching:", {
-    kind: resolved.kind,
-    id: resolved.id,
-    claimedSuccess,
-    verifiedSuccess,
-    claimedFailure,
-  });
 
   try {
     if (resolved.kind === "workshop") {

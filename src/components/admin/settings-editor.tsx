@@ -30,6 +30,7 @@ export function SettingsEditor() {
   const [cardsHeading, setCardsHeading] = useState("למה לתרגל איתנו");
   const [cardsSubheading, setCardsSubheading] = useState("");
   const [creditPrice, setCreditPrice] = useState(50);
+  const [punchCard5Price, setPunchCard5Price] = useState(200);
   const [punchCardPrice, setPunchCardPrice] = useState(350);
   const [cancellationWindow, setCancellationWindow] = useState(6);
   const [aboutTitle, setAboutTitle] = useState("נעים להכיר");
@@ -55,6 +56,7 @@ export function SettingsEditor() {
       if (settings.cardsHeading) setCardsHeading(settings.cardsHeading);
       if (settings.cardsSubheading != null) setCardsSubheading(settings.cardsSubheading);
       if (settings.creditPrice != null) setCreditPrice(settings.creditPrice);
+      if (settings.punchCard5Price != null) setPunchCard5Price(settings.punchCard5Price);
       if (settings.punchCardPrice != null) setPunchCardPrice(settings.punchCardPrice);
       if (settings.cancellationWindow != null) setCancellationWindow(settings.cancellationWindow);
       if (settings.aboutTitle) setAboutTitle(settings.aboutTitle);
@@ -100,7 +102,7 @@ export function SettingsEditor() {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCardPrice, cancellationWindow, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
+        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCard5Price, punchCardPrice, cancellationWindow, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
       });
       if (!res.ok) { toast.error("שמירה נכשלה"); return; }
       toast.success("ההגדרות נשמרו");
@@ -176,12 +178,32 @@ export function SettingsEditor() {
         <CardHeader><CardTitle>מחירון</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר קרדיט בודד (₪)</label>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר שיעור בודד (₪)</label>
             <Input type="number" min={0} value={creditPrice} onChange={(e) => setCreditPrice(parseInt(e.target.value) || 0)} />
           </div>
           <div>
-            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר כרטיסייה (₪)</label>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר כרטיסיית 5 שיעורים (₪)</label>
+            <Input type="number" min={0} value={punchCard5Price} onChange={(e) => setPunchCard5Price(parseInt(e.target.value) || 0)} />
+            {punchCard5Price > 0 && creditPrice > 0 && (
+              <p className="mt-1 text-xs text-sage-500">
+                ₪{(punchCard5Price / 5).toFixed(0)} לשיעור ·{" "}
+                {creditPrice * 5 > punchCard5Price
+                  ? `חיסכון ${creditPrice * 5 - punchCard5Price}₪ לעומת שיעורים בודדים`
+                  : "אין חיסכון לעומת שיעורים בודדים"}
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">מחיר כרטיסיית 10 שיעורים (₪)</label>
             <Input type="number" min={0} value={punchCardPrice} onChange={(e) => setPunchCardPrice(parseInt(e.target.value) || 0)} />
+            {punchCardPrice > 0 && creditPrice > 0 && (
+              <p className="mt-1 text-xs text-sage-500">
+                ₪{(punchCardPrice / 10).toFixed(0)} לשיעור ·{" "}
+                {creditPrice * 10 > punchCardPrice
+                  ? `חיסכון ${creditPrice * 10 - punchCardPrice}₪ לעומת שיעורים בודדים`
+                  : "אין חיסכון לעומת שיעורים בודדים"}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

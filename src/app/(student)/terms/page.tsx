@@ -29,7 +29,7 @@ export default function TermsPage() {
       <p>
         האתר מופעל על ידי נועה אופיר (להלן: &quot;המפעילה&quot;). לפרטי התקשרות
         ניתן לפנות למייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a> או דרך
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a> או דרך
         טופס יצירת הקשר באתר.
       </p>
 
@@ -167,7 +167,7 @@ export default function TermsPage() {
       <h2>13. יצירת קשר</h2>
       <p>
         לשאלות, הבהרות ובקשות מיוחדות ניתן לפנות במייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>.
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>.
       </p>
 
       <p className="mt-12 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">

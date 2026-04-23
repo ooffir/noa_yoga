@@ -109,16 +109,21 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
     custom_3: input.extraCustom,
   };
 
-  console.log("[payme-debug] request:", {
-    env: envLabel,
-    apiUrl,
-    sellerUidMasked: sellerUid.slice(0, 4) + "…" + sellerUid.slice(-2),
-    sale_price: salePriceAgurot,
-    product_name: input.productName,
-    sale_callback_url: body.sale_callback_url,
-    sale_return_url: body.sale_return_url,
-    custom_1: input.customRef,
-  });
+  // Verbose outbound logging — dev only. Production logs stay clean; the
+  // higher-level `[payme-webhook]` + `[payments]` logs cover the decision
+  // points needed for incident response.
+  if (process.env.NODE_ENV === "development") {
+    console.log("[payme-debug] request:", {
+      env: envLabel,
+      apiUrl,
+      sellerUidMasked: sellerUid.slice(0, 4) + "…" + sellerUid.slice(-2),
+      sale_price: salePriceAgurot,
+      product_name: input.productName,
+      sale_callback_url: body.sale_callback_url,
+      sale_return_url: body.sale_return_url,
+      custom_1: input.customRef,
+    });
+  }
 
   let paymeResponse: PaymeGenerateSaleResponse;
   try {
@@ -130,7 +135,9 @@ async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult>
     });
 
     const text = await res.text();
-    console.log("[payme-debug] full response:", { httpStatus: res.status, body: text });
+    if (process.env.NODE_ENV === "development") {
+      console.log("[payme-debug] full response:", { httpStatus: res.status, body: text });
+    }
 
     try {
       paymeResponse = JSON.parse(text);
@@ -285,10 +292,21 @@ export async function generatePaymeSaleForWorkshop(
 //  Credit / punch-card purchase
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CreditPurchaseType = "SINGLE_CLASS" | "PUNCH_CARD";
+// Re-export from the centralized catalog so old importers continue to work
+// via `import { type CreditPurchaseType } from "@/actions/payme"`.
+export type { CreditPurchaseType } from "@/lib/product-catalog";
+
+import type { CreditPurchaseType } from "@/lib/product-catalog";
+import { productLabelFor } from "@/lib/product-catalog";
+
+const VALID_CREDIT_TYPES: CreditPurchaseType[] = [
+  "SINGLE_CLASS",
+  "PUNCH_CARD_5",
+  "PUNCH_CARD",
+];
 
 /**
- * @param type         SINGLE_CLASS (1 credit) or PUNCH_CARD (10 credits)
+ * @param type  SINGLE_CLASS (1 credit) | PUNCH_CARD_5 (5 credits) | PUNCH_CARD (10 credits)
  * @param bookClassInstanceId  optional — if provided, after successful
  *                             payment the user will be auto-booked into
  *                             this class instance on /payments/success
@@ -297,7 +315,7 @@ export async function generatePaymeSaleForCredits(
   type: CreditPurchaseType,
   bookClassInstanceId?: string,
 ): Promise<PaymeSaleResult> {
-  if (type !== "SINGLE_CLASS" && type !== "PUNCH_CARD") {
+  if (!VALID_CREDIT_TYPES.includes(type)) {
     return { ok: false, error: "סוג רכישה לא תקין" };
   }
 
@@ -308,23 +326,33 @@ export async function generatePaymeSaleForCredits(
 
   // Dynamic prices from admin settings — fallback to sane defaults.
   let creditPrice = 50;
+  let punchCard5Price = 200;
   let punchCardPrice = 350;
   try {
     const settings = await db.siteSettings.findUnique({
       where: { id: "main" },
-      select: { creditPrice: true, punchCardPrice: true },
+      select: {
+        creditPrice: true,
+        punchCard5Price: true,
+        punchCardPrice: true,
+      },
     });
     if (settings) {
       creditPrice = settings.creditPrice;
+      punchCard5Price = settings.punchCard5Price;
       punchCardPrice = settings.punchCardPrice;
     }
   } catch (err) {
     console.error("[payme-credits] failed to read settings:", err);
   }
 
-  const amountIls = type === "PUNCH_CARD" ? punchCardPrice : creditPrice;
-  const productName =
-    type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
+  const priceByType: Record<CreditPurchaseType, number> = {
+    SINGLE_CLASS: creditPrice,
+    PUNCH_CARD_5: punchCard5Price,
+    PUNCH_CARD: punchCardPrice,
+  };
+  const amountIls = priceByType[type];
+  const productName = productLabelFor(type);
 
   // Server-side dedup window: if the same user started a PENDING payment
   // for the same type within the last 60 seconds, reuse that row instead
@@ -354,9 +382,9 @@ export async function generatePaymeSaleForCredits(
       },
     }));
 
-  if (recentPending) {
-    console.log("[payme-credits] reusing recent PENDING payment:", payment.id);
-  }
+  // recentPending reuse is silent in production — no action needed beyond
+  // the DB dedup itself. Visible in development via the gated debug block
+  // below if a developer needs to confirm the flow.
 
   // Append optional auto-book class id so /payments/success can register
   // the user into the class after payment completes.

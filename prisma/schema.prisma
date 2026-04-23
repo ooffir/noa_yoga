@@ -53,7 +53,8 @@ enum punch_card_status {
 
 enum payment_type {
   SINGLE_CLASS
-  PUNCH_CARD
+  PUNCH_CARD     // 10-session card (historical default — do not rename)
+  PUNCH_CARD_5   // 5-session card
 }
 
 enum payment_status {
@@ -310,7 +311,8 @@ model SiteSettings {
   aboutContent    String  @default("") @map("about_content")
   profileImageUrl String? @map("profile_image_url")
   creditPrice        Int @default(50) @map("credit_price")
-  punchCardPrice     Int @default(350) @map("punch_card_price")
+  punchCard5Price    Int @default(200) @map("punch_card_5_price")
+  punchCardPrice     Int @default(350) @map("punch_card_price")  // 10-session card
   cancellationWindow Int @default(6) @map("cancellation_window")
 
   @@map("site_settings")

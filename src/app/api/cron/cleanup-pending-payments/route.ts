@@ -70,7 +70,7 @@ export async function GET(req: Request) {
 
   try {
     const result = await runCleanup();
-    console.log("[cleanup-pending] result:", result);
+    // Counts returned in response; Vercel Cron logs the response body.
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     console.error("[cleanup-pending] error:", error);

@@ -16,12 +16,14 @@ import {
 
 interface Props {
   creditPrice: number;
-  punchCardPrice: number;
+  punchCard5Price: number;
+  punchCardPrice: number; // 10-session card
   cancellationHours?: number;
 }
 
 export function PricingCards({
   creditPrice,
+  punchCard5Price,
   punchCardPrice,
   cancellationHours = 6,
 }: Props) {
@@ -34,9 +36,22 @@ export function PricingCards({
   // `useRef.current` mutates immediately and blocks re-entry.
   const submittingRef = useRef(false);
 
-  const savings = creditPrice * 10 - punchCardPrice;
+  // ── Savings math, all computed from the three DB prices ──
+  const savings5 = creditPrice * 5 - punchCard5Price;
+  const savings10 = creditPrice * 10 - punchCardPrice;
+  const perClass5 = Math.round(punchCard5Price / 5);
+  const perClass10 = Math.round(punchCardPrice / 10);
 
-  const plans = [
+  const plans: Array<{
+    id: CreditPurchaseType;
+    name: string;
+    price: number;
+    perClass?: number;
+    description: string;
+    features: string[];
+    highlighted: boolean;
+    badge?: string;
+  }> = [
     {
       id: "SINGLE_CLASS",
       name: "שיעור בודד",
@@ -50,17 +65,33 @@ export function PricingCards({
       highlighted: false,
     },
     {
+      id: "PUNCH_CARD_5",
+      name: "כרטיסיית 5 שיעורים",
+      price: punchCard5Price,
+      perClass: perClass5,
+      description: "חצי מחויבות, אותם יתרונות",
+      features: [
+        "5 קרדיטים לשיעורים",
+        "הרשמה לכל שיעור פנוי",
+        `ביטול חינם עד ${cancellationHours} שעות לפני`,
+        ...(savings5 > 0 ? [`חיסכון של ₪${savings5} לעומת שיעורים בודדים`] : []),
+      ],
+      highlighted: false,
+    },
+    {
       id: "PUNCH_CARD",
       name: "כרטיסיית 10 שיעורים",
       price: punchCardPrice,
+      perClass: perClass10,
       description: "המשתלם ביותר למתרגלים קבועים",
       features: [
         "10 קרדיטים לשיעורים",
         "הרשמה לכל שיעור פנוי",
         `ביטול חינם עד ${cancellationHours} שעות לפני`,
-        ...(savings > 0 ? [`חיסכון של ₪${savings} לעומת שיעורים בודדים`] : []),
+        ...(savings10 > 0 ? [`חיסכון של ₪${savings10} לעומת שיעורים בודדים`] : []),
       ],
       highlighted: true,
+      badge: "הכי משתלם",
     },
   ];
 
@@ -69,7 +100,7 @@ export function PricingCards({
       router.push("/sign-in");
       return;
     }
-    if (submittingRef.current) return; // block re-entry (double-click)
+    if (submittingRef.current) return;
     submittingRef.current = true;
     setPendingType(type);
 
@@ -82,53 +113,67 @@ export function PricingCards({
         return;
       }
       toast.success("מעבירים לדף התשלום…");
-      // Keep the ref & state set — browser is about to redirect.
       window.location.href = result.url;
     });
   };
 
   return (
-    <div className="space-y-5">
-      {plans.map((plan) => (
-        <Card
-          key={plan.id}
-          className={cn(
-            "relative overflow-hidden rounded-3xl transition-all",
-            plan.highlighted && "border-sage-300 shadow-lg ring-1 ring-sage-200"
-          )}
-        >
-          {plan.highlighted && (
-            <div className="absolute top-0 left-0 right-0 bg-sage-600 text-white text-xs font-medium text-center py-1.5">
-              הכי משתלם
-            </div>
-          )}
-          <CardHeader className={cn(plan.highlighted && "pt-10")}>
-            <CardTitle>{plan.name}</CardTitle>
-            <p className="text-sm text-sage-500">{plan.description}</p>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-baseline gap-1 mb-6">
-              <span className="text-4xl font-bold text-sage-800">₪{plan.price}</span>
-            </div>
-            <ul className="space-y-3 mb-8">
-              {plan.features.map((feature) => (
-                <li key={feature} className="flex items-center gap-2 text-sm text-sage-600">
-                  <Check className="h-4 w-4 text-sage-500 shrink-0" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-            <Button
-              className="w-full rounded-2xl"
-              variant={plan.highlighted ? "default" : "outline"}
-              onClick={() => handlePurchase(plan.id as CreditPurchaseType)}
-              disabled={pendingType !== null}
-            >
-              {pendingType === plan.id ? <Spinner className="h-4 w-4" /> : "רכישה"}
-            </Button>
-          </CardContent>
-        </Card>
-      ))}
+    // Mobile: vertical stack. Desktop (≥ md): 3 equal-width columns.
+    // Highlighted plan stays visually centered because it's the 3rd child
+    // and CSS Grid auto-places items left-to-right (in RTL: right-to-left),
+    // so the "הכי משתלם" card gets the leftmost column — same prominence
+    // as on mobile where it's at the bottom.
+    <div className="grid gap-5 md:grid-cols-3 md:gap-6 md:items-start">
+      {plans.map((plan) => {
+        const isPending = pendingType === plan.id;
+        return (
+          <Card
+            key={plan.id}
+            className={cn(
+              "relative overflow-hidden rounded-3xl transition-all",
+              plan.highlighted && "border-sage-300 shadow-lg ring-1 ring-sage-200 md:-translate-y-2",
+            )}
+          >
+            {plan.badge && (
+              <div className="absolute top-0 left-0 right-0 bg-sage-600 text-white text-xs font-medium text-center py-1.5">
+                {plan.badge}
+              </div>
+            )}
+            <CardHeader className={cn(plan.badge && "pt-10")}>
+              <CardTitle>{plan.name}</CardTitle>
+              <p className="text-sm text-sage-500">{plan.description}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-baseline gap-1 mb-1">
+                <span className="text-4xl font-bold text-sage-800">₪{plan.price}</span>
+              </div>
+              {plan.perClass !== undefined && (
+                <p className="mb-5 text-xs text-sage-500">
+                  ₪{plan.perClass} לשיעור
+                </p>
+              )}
+              {plan.perClass === undefined && <div className="mb-5" />}
+
+              <ul className="space-y-3 mb-8">
+                {plan.features.map((feature) => (
+                  <li key={feature} className="flex items-center gap-2 text-sm text-sage-600">
+                    <Check className="h-4 w-4 text-sage-500 shrink-0" />
+                    {feature}
+                  </li>
+                ))}
+              </ul>
+              <Button
+                className="w-full rounded-2xl"
+                variant={plan.highlighted ? "default" : "outline"}
+                onClick={() => handlePurchase(plan.id)}
+                disabled={pendingType !== null}
+              >
+                {isPending ? <Spinner className="h-4 w-4" /> : "רכישה"}
+              </Button>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }

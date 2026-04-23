@@ -126,7 +126,7 @@ export default async function RefundPolicyPage() {
       <p>
         אם ביצעת תשלום ולא קיבלת את הקרדיטים תוך 10 דקות, אנא פני אלינו
         מיידית במייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>{" "}
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>{" "}
         בצירוף מספר העסקה מ-PayMe. נטפל בפנייה בתוך יום עבודה אחד ונוודא
         שהקרדיטים יועברו לחשבונך או שיבוצע החזר כספי אם לא ניתן לעדכן את
         החשבון.
@@ -161,7 +161,7 @@ export default async function RefundPolicyPage() {
       <h2>7. יצירת קשר</h2>
       <p>
         לכל שאלה בנושא ביטולים והחזרים:{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>.
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>.
       </p>
 
       <p className="mt-12 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">

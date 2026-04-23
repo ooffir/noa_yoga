@@ -47,6 +47,8 @@ export async function PUT(req: Request) {
         aboutContent: body.aboutContent || "",
         profileImageUrl: body.profileImageUrl || null,
         creditPrice: body.creditPrice != null ? Number(body.creditPrice) : 50,
+        punchCard5Price:
+          body.punchCard5Price != null ? Number(body.punchCard5Price) : 200,
         punchCardPrice: body.punchCardPrice != null ? Number(body.punchCardPrice) : 350,
         cancellationWindow:
           body.cancellationWindow != null

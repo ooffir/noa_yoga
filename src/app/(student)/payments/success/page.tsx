@@ -11,6 +11,10 @@ import {
   isPaymeSuccess,
   isPaymeFailure,
 } from "@/lib/payments";
+import {
+  creditsForPaymentType,
+  productLabelFor,
+} from "@/lib/product-catalog";
 import { verifyPaymeSale } from "@/lib/payme-verify";
 import { PendingPoller } from "@/components/payments/pending-poller";
 
@@ -58,7 +62,8 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
           if (verification.ok) {
             await completePaymentSuccess(paymentId, urlSaleCode);
           } else {
-            console.warn(
+            // Failed verification is an error condition — surface it to logs.
+            console.error(
               "[payments/success] URL success claim failed verification:",
               verification,
             );
@@ -66,7 +71,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
         } else {
           // No sale code means we can't verify — don't self-heal here.
           // The real PayMe IPN webhook is still the authoritative path.
-          console.warn(
+          console.error(
             "[payments/success] success claim has no sale code, skipping self-heal",
           );
         }
@@ -81,9 +86,8 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
 
       if (payment) {
         status = payment.status === "REFUNDED" ? "COMPLETED" : payment.status;
-        productLabel =
-          payment.type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
-        creditsGranted = payment.type === "PUNCH_CARD" ? 10 : 1;
+        productLabel = productLabelFor(payment.type);
+        creditsGranted = creditsForPaymentType(payment.type);
       }
 
       // ─── Auto-book into the class the user clicked "הרשמה" on ───

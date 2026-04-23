@@ -39,15 +39,26 @@ interface UserLite {
   receiveEmails: boolean;
 }
 
+// Studio's primary contact email — used as default `from` + `reply-to`
+// header. If a user replies to any system email, the reply lands in
+// noayogaa@gmail.com.
+const STUDIO_EMAIL = "noayogaa@gmail.com";
 const EMAIL_FROM =
-  process.env.EMAIL_FROM || "Noa Yogis <noreply@noayogis.com>";
+  process.env.EMAIL_FROM || `Noa Yogis <${STUDIO_EMAIL}>`;
+const REPLY_TO = STUDIO_EMAIL;
 
 /**
  * Always sends. Use for transactional / legally-required emails.
  */
 export async function sendTransactionalEmail({ to, subject, html }: EmailOptions) {
   try {
-    await transporter.sendMail({ from: EMAIL_FROM, to, subject, html });
+    await transporter.sendMail({
+      from: EMAIL_FROM,
+      replyTo: REPLY_TO,
+      to,
+      subject,
+      html,
+    });
   } catch (error) {
     console.error("[email] transactional send failed:", error);
   }
@@ -61,11 +72,16 @@ export async function sendMarketingEmail(
   { subject, html }: Omit<EmailOptions, "to">,
 ) {
   if (!user.receiveEmails) {
-    console.log("[email] skipping — user opted out:", user.email);
-    return;
+    return; // respects opt-out, no error path
   }
   try {
-    await transporter.sendMail({ from: EMAIL_FROM, to: user.email, subject, html });
+    await transporter.sendMail({
+      from: EMAIL_FROM,
+      replyTo: REPLY_TO,
+      to: user.email,
+      subject,
+      html,
+    });
   } catch (error) {
     console.error("[email] marketing send failed:", error);
   }
@@ -77,7 +93,13 @@ export async function sendMarketingEmail(
  */
 export async function sendEmail({ to, subject, html }: EmailOptions) {
   try {
-    await transporter.sendMail({ from: EMAIL_FROM, to, subject, html });
+    await transporter.sendMail({
+      from: EMAIL_FROM,
+      replyTo: REPLY_TO,
+      to,
+      subject,
+      html,
+    });
   } catch (error) {
     console.error("[email] send failed:", error);
   }

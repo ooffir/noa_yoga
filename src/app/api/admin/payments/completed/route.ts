@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-helpers";
 import { db } from "@/lib/db";
+import { productLabelFor } from "@/lib/product-catalog";
 
 /**
  * GET /api/admin/payments/completed?limit=100
@@ -69,7 +70,7 @@ export async function GET(req: Request) {
       id: p.id,
       userName: p.user.name,
       userEmail: p.user.email,
-      productLabel: p.type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד",
+      productLabel: productLabelFor(p.type),
       amountIls: p.amount / 100,
       at: p.updatedAt.toISOString(),
     })),

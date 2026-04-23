@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import { paymentReceiptEmail, sendTransactionalEmail } from "@/lib/email";
+import {
+  creditsForPaymentType,
+  productLabelFor,
+} from "@/lib/product-catalog";
 
 /**
  * Payment completion helpers — shared by the PayMe webhook and the
@@ -38,7 +42,7 @@ export async function completePaymentSuccess(
     include: { user: { select: { email: true, name: true } } },
   });
   if (!payment) {
-    console.warn("[payments] completePaymentSuccess: payment not found:", paymentId);
+    console.error("[payments] completePaymentSuccess: payment not found:", paymentId);
     return { kind: "not_found" };
   }
 
@@ -53,7 +57,10 @@ export async function completePaymentSuccess(
 
   if (payment.status === "REFUNDED") return { kind: "refunded" };
 
-  const credits = payment.type === "PUNCH_CARD" ? 10 : 1;
+  // Credits derived from the shared product catalog — single source of
+  // truth. Adding a new product (e.g. PUNCH_CARD_20) only requires an
+  // entry in src/lib/product-catalog.ts; this line needs no change.
+  const credits = creditsForPaymentType(payment.type);
 
   // Atomic: Payment → COMPLETED + PunchCard created.
   await db.$transaction([
@@ -86,8 +93,7 @@ export async function completePaymentSuccess(
   // Fire-and-forget transactional receipt. Always sent — bypasses the
   // user's `receiveEmails` opt-out per consumer-law obligations.
   try {
-    const productLabel =
-      payment.type === "PUNCH_CARD" ? "כרטיסיית 10 שיעורים" : "שיעור בודד";
+    const productLabel = productLabelFor(payment.type);
     const amountIls = payment.amount / 100; // amount stored in agurot
     const txId = paymeSaleCode ?? payment.paymentPageUid ?? payment.id;
     const { subject, html } = paymentReceiptEmail({
@@ -104,7 +110,6 @@ export async function completePaymentSuccess(
     console.error("[payments] receipt email build failed:", err);
   }
 
-  console.log("[payments] completePaymentSuccess OK:", paymentId, `+${credits} credits`);
   return { kind: "completed", paymentId, credits };
 }
 
@@ -115,7 +120,6 @@ export async function failPayment(paymentId: string): Promise<void> {
     where: { id: paymentId },
     data: { status: "FAILED" },
   });
-  console.log("[payments] failPayment:", paymentId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,7 +172,6 @@ export async function completeWorkshopSuccess(
     console.error("[payments] workshop receipt email build failed:", err);
   }
 
-  console.log("[payments] completeWorkshopSuccess OK:", registrationId);
   return { kind: "completed", registrationId };
 }
 
@@ -179,7 +182,6 @@ export async function cancelWorkshop(registrationId: string): Promise<void> {
     where: { id: registrationId },
     data: { paymentStatus: "CANCELLED" },
   });
-  console.log("[payments] cancelWorkshop:", registrationId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

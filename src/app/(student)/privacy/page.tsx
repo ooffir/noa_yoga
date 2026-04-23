@@ -30,7 +30,7 @@ export default function PrivacyPage() {
       <p>
         בעלת האתר והאחראית על איסוף המידע היא <strong>נועה אופיר</strong>{" "}
         (להלן: &quot;המפעילה&quot;). לשאלות בנושא פרטיות ניתן לפנות במייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>.
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>.
       </p>
 
       <h2>2. איזה מידע אנחנו אוספים?</h2>
@@ -167,7 +167,7 @@ export default function PrivacyPage() {
       </ul>
       <p>
         למימוש זכויות אלו ניתן לפנות במייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>.
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>.
       </p>
 
       <h2>8. אבטחת מידע</h2>
@@ -195,7 +195,7 @@ export default function PrivacyPage() {
       <h2>11. יצירת קשר</h2>
       <p>
         לכל שאלה בנושא פרטיות ניתן לפנות במייל{" "}
-        <a href="mailto:noa6660011@gmail.com">noa6660011@gmail.com</a>. אנחנו
+        <a href="mailto:noayogaa@gmail.com">noayogaa@gmail.com</a>. אנחנו
         מתחייבות להשיב תוך 14 ימי עבודה.
       </p>
 

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Instagram, MessageCircle, Mail } from "lucide-react";
 
-const CONTACT_EMAIL = "noa6660011@gmail.com";
+const CONTACT_EMAIL = "noayogaa@gmail.com";
 const INSTAGRAM_URL = "https://www.instagram.com/noaoffir/";
 const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/F0VZnlRRPbg9td08thtOjK";
 
