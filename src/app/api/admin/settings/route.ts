@@ -54,6 +54,46 @@ export async function PUT(req: Request) {
           body.cancellationWindow != null
             ? Math.max(0, Number(body.cancellationWindow))
             : 6,
+        // ── Email dispatch config ──
+        // reminderHour clamped to 0-23; reminderDaysBefore clamped to 0-14
+        // (anything further out is almost certainly a typo).
+        reminderHour:
+          body.reminderHour != null
+            ? Math.min(23, Math.max(0, Number(body.reminderHour)))
+            : 9,
+        reminderDaysBefore:
+          body.reminderDaysBefore != null
+            ? Math.min(14, Math.max(0, Number(body.reminderDaysBefore)))
+            : 1,
+        emailTemplateReminder:
+          typeof body.emailTemplateReminder === "string"
+            ? body.emailTemplateReminder
+            : "",
+        emailTemplatePromotion:
+          typeof body.emailTemplatePromotion === "string"
+            ? body.emailTemplatePromotion
+            : "",
+        emailTemplateCancellation:
+          typeof body.emailTemplateCancellation === "string"
+            ? body.emailTemplateCancellation
+            : "",
+        // ── Public contact info (rendered in the footer) ──
+        contactEmail:
+          typeof body.contactEmail === "string" && body.contactEmail.trim()
+            ? body.contactEmail.trim()
+            : undefined,
+        contactPhone:
+          typeof body.contactPhone === "string"
+            ? body.contactPhone.trim()
+            : undefined,
+        instagramUrl:
+          typeof body.instagramUrl === "string"
+            ? body.instagramUrl.trim()
+            : undefined,
+        whatsappUrl:
+          typeof body.whatsappUrl === "string"
+            ? body.whatsappUrl.trim()
+            : undefined,
       },
     });
 

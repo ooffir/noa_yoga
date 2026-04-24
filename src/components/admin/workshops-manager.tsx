@@ -26,6 +26,10 @@ export function WorkshopsManager() {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  // "upcoming" shows future workshops (default); "archive" shows past ones.
+  // The API already returns ALL workshops sorted desc by date, so we just
+  // partition client-side — no extra round-trip needed.
+  const [view, setView] = useState<"upcoming" | "archive">("upcoming");
   const [editId, setEditId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -117,23 +121,71 @@ export function WorkshopsManager() {
 
   if (loading) return <PageLoader />;
 
+  // Partition by date — pre-computed so the render paths stay simple.
+  const now = Date.now();
+  const upcoming = workshops.filter((w) => new Date(w.date).getTime() >= now);
+  const archive = workshops.filter((w) => new Date(w.date).getTime() < now);
+  const visible = view === "archive" ? archive : upcoming;
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-sage-500">{workshops.length} סדנאות</p>
-        <Button onClick={openCreate} className="rounded-2xl gap-2">
-          <Plus className="h-4 w-4" />
-          סדנה חדשה
-        </Button>
+      {/* ── Tab toggle — same visual language as the payments view ── */}
+      <div
+        role="tablist"
+        aria-label="תצוגת סדנאות"
+        className="flex items-center gap-1 rounded-3xl border border-sage-100 bg-white p-1"
+      >
+        <button
+          role="tab"
+          aria-selected={view === "upcoming"}
+          onClick={() => setView("upcoming")}
+          className={`flex-1 rounded-2xl px-4 py-2 text-sm font-medium transition-colors ${
+            view === "upcoming"
+              ? "bg-sage-600 text-white shadow-sm"
+              : "bg-transparent text-sage-600 hover:bg-sage-50"
+          }`}
+        >
+          קרובות ({upcoming.length})
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "archive"}
+          onClick={() => setView("archive")}
+          className={`flex-1 rounded-2xl px-4 py-2 text-sm font-medium transition-colors ${
+            view === "archive"
+              ? "bg-sage-600 text-white shadow-sm"
+              : "bg-transparent text-sage-600 hover:bg-sage-50"
+          }`}
+        >
+          ארכיון ({archive.length})
+        </button>
       </div>
 
-      {workshops.length === 0 ? (
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-sage-500">
+          {view === "archive"
+            ? `${archive.length} סדנאות שהתקיימו`
+            : `${upcoming.length} סדנאות קרובות`}
+        </p>
+        {view === "upcoming" && (
+          <Button onClick={openCreate} className="rounded-2xl gap-2">
+            <Plus className="h-4 w-4" />
+            סדנה חדשה
+          </Button>
+        )}
+      </div>
+
+      {visible.length === 0 ? (
         <Card className="rounded-3xl">
-          <CardContent className="py-12 text-center text-sage-400">אין סדנאות עדיין.</CardContent>
+          <CardContent className="py-12 text-center text-sage-400">
+            {view === "archive"
+              ? "עוד לא התקיימו סדנאות."
+              : "אין סדנאות קרובות."}
+          </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {workshops.map((w) => (
+          {visible.map((w) => (
             <Card key={w.id} className="rounded-3xl">
               <CardContent className="py-4">
                 <div className="flex items-center justify-between gap-3">
@@ -149,14 +201,22 @@ export function WorkshopsManager() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(w)}>
-                      <Pencil className="h-3.5 w-3.5 text-sage-400" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(w.id)}>
-                      <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                    </Button>
-                  </div>
+                  {/*
+                   * Only show edit/delete on upcoming workshops.
+                   * Archive view is read-only — triggering DELETE on a
+                   * past workshop would fire the "refund is coming"
+                   * cancellation emails to people who already attended.
+                   */}
+                  {view === "upcoming" && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(w)}>
+                        <Pencil className="h-3.5 w-3.5 text-sage-400" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(w.id)}>
+                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -3,6 +3,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
 import { classDefinitionSchema } from "@/lib/validations";
+import { BookingEngine } from "@/lib/booking-engine";
 
 export async function GET(
   req: Request,
@@ -98,26 +99,55 @@ export async function DELETE(
 
     const { id } = await params;
 
+    // Deactivate the recurring definition so no more instances generate.
     await db.classDefinition.update({
       where: { id },
       data: { isActive: false },
     });
 
+    // Cancel every future instance with the full refund cascade — we run
+    // them one at a time through BookingEngine instead of a bulk updateMany
+    // so each instance's booked students get their credit back AND a
+    // cancellation email. `adminCancelClassInstance` is idempotent, so
+    // already-cancelled instances are a safe no-op.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    await db.classInstance.updateMany({
+    const futureInstances = await db.classInstance.findMany({
       where: {
         classDefId: id,
         date: { gte: today },
+        isCancelled: false,
       },
-      data: { isCancelled: true },
+      select: { id: true },
     });
+
+    let totalAffected = 0;
+    for (const inst of futureInstances) {
+      try {
+        const res = await BookingEngine.adminCancelClassInstance(
+          inst.id,
+          "השיעור הושבת על ידי הסטודיו",
+        );
+        totalAffected += res.affectedCount;
+      } catch (err) {
+        // One bad instance shouldn't block the rest. Log & continue.
+        console.error(
+          `[admin/schedule DELETE] failed on instance=${inst.id}:`,
+          err,
+        );
+      }
+    }
 
     revalidateTag("schedule", "max");
     revalidatePath("/schedule");
-    return NextResponse.json({ message: "השיעור הושבת" });
-  } catch {
+    return NextResponse.json({
+      message: "השיעור הושבת",
+      instancesCancelled: futureInstances.length,
+      bookingsRefunded: totalAffected,
+    });
+  } catch (err) {
+    console.error("[admin/schedule DELETE] outer failure:", err);
     return NextResponse.json({ error: "מחיקה נכשלה" }, { status: 500 });
   }
 }

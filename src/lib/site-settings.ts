@@ -31,3 +31,68 @@ export async function getCancellationWindowHours(): Promise<number> {
 
   return 6;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  Email dispatch settings (templates + reminder timing)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface EmailDispatchConfig {
+  reminderHour: number;
+  reminderDaysBefore: number;
+  emailTemplateReminder: string;
+  emailTemplatePromotion: string;
+  emailTemplateCancellation: string;
+}
+
+const EMAIL_CONFIG_DEFAULTS: EmailDispatchConfig = {
+  reminderHour: 9,
+  reminderDaysBefore: 1,
+  emailTemplateReminder: "",
+  emailTemplatePromotion: "",
+  emailTemplateCancellation: "",
+};
+
+/**
+ * Read the full email-dispatch config in one round-trip.
+ *
+ * Used by:
+ *   - the daily reminder cron  (needs reminderHour + days-before + template)
+ *   - the booking engine        (needs promotion + cancellation templates)
+ *
+ * All fields are null-safe: if the row is missing or a column isn't
+ * populated yet (e.g. during the window between deploying code and
+ * applying the SQL migration), we fall back to empty strings and sensible
+ * numeric defaults. Empty templates trigger the hardcoded fallback inside
+ * src/lib/email.ts.
+ */
+export async function getEmailDispatchConfig(): Promise<EmailDispatchConfig> {
+  try {
+    const settings = await db.siteSettings.findUnique({
+      where: { id: "main" },
+      select: {
+        reminderHour: true,
+        reminderDaysBefore: true,
+        emailTemplateReminder: true,
+        emailTemplatePromotion: true,
+        emailTemplateCancellation: true,
+      },
+    });
+    if (!settings) return EMAIL_CONFIG_DEFAULTS;
+
+    return {
+      reminderHour:
+        typeof settings.reminderHour === "number" ? settings.reminderHour : 9,
+      reminderDaysBefore:
+        typeof settings.reminderDaysBefore === "number"
+          ? settings.reminderDaysBefore
+          : 1,
+      emailTemplateReminder: settings.emailTemplateReminder ?? "",
+      emailTemplatePromotion: settings.emailTemplatePromotion ?? "",
+      emailTemplateCancellation: settings.emailTemplateCancellation ?? "",
+    };
+  } catch (err) {
+    console.error("[site-settings] email config read failed:", err);
+    return EMAIL_CONFIG_DEFAULTS;
+  }
+}
+

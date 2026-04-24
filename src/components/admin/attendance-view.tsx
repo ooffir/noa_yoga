@@ -3,7 +3,14 @@
 import { useState, useEffect } from "react";
 import { format, addWeeks, startOfWeek } from "date-fns";
 import { he } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Check, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  X,
+  UserPlus,
+  Clock3,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,15 +27,17 @@ interface AdminClass {
   instructor: string;
   maxCapacity: number;
   currentBookings: number;
-  bookings: {
-    id?: string;
-    user: { id: string; name: string; email: string };
-  }[];
 }
 
 interface AttendanceBooking {
   id: string;
   attendedAt: string | null;
+  user: { id: string; name: string; email: string; phone: string | null };
+}
+
+interface WaitlistEntry {
+  id: string;
+  createdAt: string;
   user: { id: string; name: string; email: string; phone: string | null };
 }
 
@@ -38,8 +47,10 @@ export function AttendanceView() {
   const [loading, setLoading] = useState(true);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [attendees, setAttendees] = useState<AttendanceBooking[]>([]);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [promotingUserId, setPromotingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -55,7 +66,16 @@ export function AttendanceView() {
     try {
       const res = await fetch(`/api/admin/attendance/${instanceId}`);
       const data = await res.json();
-      setAttendees(data);
+      // New response shape: { bookings: [], waitlist: [] }
+      // Keep backwards compatibility with the old array shape in case of
+      // a stale deploy serving the array form.
+      if (Array.isArray(data)) {
+        setAttendees(data);
+        setWaitlist([]);
+      } else {
+        setAttendees(data.bookings || []);
+        setWaitlist(data.waitlist || []);
+      }
     } catch {
       toast.error("שגיאה בטעינת נוכחות");
     }
@@ -87,11 +107,45 @@ export function AttendanceView() {
     setMarkingId(null);
   };
 
+  const promoteFromWaitlist = async (userId: string, userName: string) => {
+    if (
+      !confirm(
+        `להכניס את ${userName} לשיעור? פעולה זו תוציא את הסטודנטית מרשימת ההמתנה, תיצור לה רישום מאושר ותנכה קרדיט אחד מהיתרה שלה.`,
+      )
+    )
+      return;
+    if (!selectedClass) return;
+
+    setPromotingUserId(userId);
+    try {
+      const res = await fetch(`/api/admin/attendance/${selectedClass}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "promote", userId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "פעולה נכשלה");
+        return;
+      }
+      toast.success(
+        data.overrode
+          ? "הסטודנטית נכנסה לשיעור (מעל הקיבולת — +1 מעל המקסימום)"
+          : "הסטודנטית נכנסה לשיעור",
+      );
+      await loadAttendance(selectedClass); // refresh both lists
+    } catch {
+      toast.error("פעולה נכשלה");
+    } finally {
+      setPromotingUserId(null);
+    }
+  };
+
   const weekStart = addWeeks(startOfWeek(new Date(), { weekStartsOn: 0 }), weekOffset);
 
   return (
     <div className="grid md:grid-cols-2 gap-6">
-      {/* רשימת שיעורים */}
+      {/* ─── Class list ─── */}
       <div>
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setWeekOffset((w) => w + 1)}>
@@ -129,77 +183,151 @@ export function AttendanceView() {
         )}
       </div>
 
-      {/* פאנל נוכחות */}
-      <Card className="rounded-3xl">
-        <CardHeader>
-          <CardTitle className="text-lg">נוכחות</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!selectedClass ? (
-            <p className="text-sage-400 text-sm text-center py-8">
-              בחרו שיעור כדי לראות את הנוכחות
-            </p>
-          ) : attendanceLoading ? (
-            <div className="flex justify-center py-8">
-              <Spinner className="h-6 w-6" />
-            </div>
-          ) : attendees.length === 0 ? (
-            <p className="text-sage-400 text-sm text-center py-8">
-              אין הזמנות לשיעור זה
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {attendees.map((booking) => (
-                <div
-                  key={booking.id}
-                  className="flex items-center justify-between rounded-2xl border border-sage-100 px-4 py-3"
-                >
-                  <div>
-                    <p className="font-medium text-sage-900 text-sm">
-                      {booking.user.name || booking.user.email}
-                    </p>
-                    {booking.user.phone && (
-                      <p className="text-xs text-sage-400">{booking.user.phone}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {booking.attendedAt ? (
-                      <>
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full">נוכחת</Badge>
+      {/* ─── Attendance + waitlist panel ─── */}
+      <div className="space-y-4">
+        {/* Booked students */}
+        <Card className="rounded-3xl">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              רשומות
+              {attendees.length > 0 && (
+                <Badge className="rounded-full text-xs">{attendees.length}</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!selectedClass ? (
+              <p className="text-sage-400 text-sm text-center py-8">
+                בחרו שיעור כדי לראות את הנוכחות
+              </p>
+            ) : attendanceLoading ? (
+              <div className="flex justify-center py-8">
+                <Spinner className="h-6 w-6" />
+              </div>
+            ) : attendees.length === 0 ? (
+              <p className="text-sage-400 text-sm text-center py-8">
+                אין הזמנות לשיעור זה
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {attendees.map((booking) => (
+                  <div
+                    key={booking.id}
+                    className="flex items-center justify-between rounded-2xl border border-sage-100 px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-medium text-sage-900 text-sm">
+                        {booking.user.name || booking.user.email}
+                      </p>
+                      {booking.user.phone && (
+                        <p className="text-xs text-sage-400">{booking.user.phone}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {booking.attendedAt ? (
+                        <>
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full">נוכחת</Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => markAttendance(booking.id, false)}
+                            disabled={markingId === booking.id}
+                          >
+                            {markingId === booking.id ? <Spinner className="h-3 w-3" /> : <X className="h-4 w-4 text-red-400" />}
+                          </Button>
+                        </>
+                      ) : (
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
-                          onClick={() => markAttendance(booking.id, false)}
+                          className="rounded-xl"
+                          onClick={() => markAttendance(booking.id, true)}
                           disabled={markingId === booking.id}
                         >
-                          {markingId === booking.id ? <Spinner className="h-3 w-3" /> : <X className="h-4 w-4 text-red-400" />}
+                          {markingId === booking.id ? (
+                            <Spinner className="h-3 w-3" />
+                          ) : (
+                            <>
+                              <Check className="h-4 w-4 ml-1" />
+                              סימון נוכחות
+                            </>
+                          )}
                         </Button>
-                      </>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl"
-                        onClick={() => markAttendance(booking.id, true)}
-                        disabled={markingId === booking.id}
-                      >
-                        {markingId === booking.id ? (
-                          <Spinner className="h-3 w-3" />
-                        ) : (
-                          <>
-                            <Check className="h-4 w-4 ml-1" />
-                            סימון נוכחות
-                          </>
-                        )}
-                      </Button>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ─── Waitlist section — only shown when a class is selected
+             AND has active waiters. Gives the admin a direct path to
+             promote a specific student out of order (medical, etc.). */}
+        {selectedClass && !attendanceLoading && waitlist.length > 0 && (
+          <Card className="rounded-3xl border-amber-200">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Clock3 className="h-4 w-4 text-amber-600" />
+                רשימת המתנה
+                <Badge className="rounded-full text-xs bg-amber-100 text-amber-700 border border-amber-200">
+                  {waitlist.length}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {waitlist.map((entry, idx) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center justify-between rounded-2xl border border-amber-100 bg-amber-50/30 px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">
+                        {idx + 1}
+                      </span>
+                      <div>
+                        <p className="font-medium text-sage-900 text-sm">
+                          {entry.user.name || entry.user.email}
+                        </p>
+                        {entry.user.phone && (
+                          <p className="text-xs text-sage-400">{entry.user.phone}</p>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl gap-1.5 border-sage-300 hover:bg-sage-50"
+                      onClick={() =>
+                        promoteFromWaitlist(
+                          entry.user.id,
+                          entry.user.name || entry.user.email,
+                        )
+                      }
+                      disabled={promotingUserId === entry.user.id}
+                    >
+                      {promotingUserId === entry.user.id ? (
+                        <Spinner className="h-3 w-3" />
+                      ) : (
+                        <>
+                          <UserPlus className="h-4 w-4" />
+                          הכנס לשיעור
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[11px] text-sage-500 leading-relaxed">
+                לחיצה על &quot;הכנס לשיעור&quot; יוצרת רישום מאושר ומנכה קרדיט אחד
+                מהסטודנטית. ניתן להכניס גם מעבר לקיבולת המרבית.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

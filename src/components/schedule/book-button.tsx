@@ -11,7 +11,7 @@ import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog
 
 interface BookButtonProps {
   classInstanceId: string;
-  action: "book" | "waitlist" | "cancel";
+  action: "book" | "waitlist" | "cancel" | "leave-waitlist";
   label: string;
   classTitle?: string;
   classDate?: string | Date;
@@ -88,6 +88,32 @@ export function BookButton({
       return;
     }
 
+    // Leave-waitlist flow — single confirmation + POST. No credits to
+    // worry about since joining the waitlist never cost anything.
+    if (action === "leave-waitlist") {
+      if (!confirm("להסיר מרשימת ההמתנה לשיעור זה?")) return;
+      setLoading(true);
+      try {
+        const res = await fetch("/api/waitlist/leave", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ classInstanceId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          toast.error(data.error || "פעולה נכשלה");
+          return;
+        }
+        toast.success("הוסרת מרשימת ההמתנה");
+        router.refresh();
+      } catch {
+        toast.error("משהו השתבש, נסו שוב");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     // Book / waitlist flow
     setLoading(true);
     setCalendarUrl(null);
@@ -140,7 +166,12 @@ export function BookButton({
     );
   }
 
-  const variant = action === "cancel" ? "ghost" : action === "book" ? "default" : "outline";
+  const variant =
+    action === "cancel" || action === "leave-waitlist"
+      ? "ghost"
+      : action === "book"
+      ? "default"
+      : "outline";
 
   return (
     <>
@@ -150,7 +181,7 @@ export function BookButton({
         onClick={handleClick}
         disabled={loading}
         className={
-          action === "cancel"
+          action === "cancel" || action === "leave-waitlist"
             ? "text-red-500 hover:text-red-600 hover:bg-red-50 text-xs"
             : "min-w-[80px] text-xs"
         }

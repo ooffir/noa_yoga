@@ -210,6 +210,96 @@ function escapeHtml(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Admin-template formatter
+//
+//  Resolves {{variable}} placeholders against a data bag and converts the
+//  resulting text to safe HTML with:
+//    - paragraph breaks on blank lines
+//    - <br/> on single newlines
+//    - **bold** → <strong>
+//
+//  NOTE: unknown variables are kept as a visible `{{missing}}` tag rather
+//  than silently stripped — that way Noa can see her own typos in a test
+//  send rather than discovering them after hundreds of deliveries.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TemplateData = Record<string, string | number | null | undefined>;
+
+/**
+ * Replace `{{var}}` placeholders in a raw template with values from `data`.
+ * Returns the resolved *text* (still escaped when piped through our HTML
+ * renderers).
+ */
+export function formatEmail(template: string, data: TemplateData): string {
+  if (!template) return "";
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (full, key) => {
+    const v = data[key];
+    if (v === undefined || v === null || v === "") return full; // leave {{key}}
+    return String(v);
+  });
+}
+
+/**
+ * Turn a raw plain-text / light-markdown body into the inner HTML of an
+ * email — safe for injecting into the sage wrapper in `renderEmail()`.
+ *
+ * Rules:
+ *   - HTML entities are escaped FIRST, so author `<script>` can't execute.
+ *   - Blank line (`\n\n`) separates paragraphs (`<p>...</p>`).
+ *   - Single `\n` inside a paragraph becomes `<br/>`.
+ *   - `**text**` becomes `<strong>text</strong>`.
+ */
+function renderAuthorBodyHtml(text: string): string {
+  const escaped = escapeHtml(text.trim());
+  const paragraphs = escaped
+    .split(/\n{2,}/) // blank line = paragraph break
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const html = paragraphs
+    .map((p) => {
+      const withBreaks = p.replace(/\n/g, "<br/>");
+      const withBold = withBreaks.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      return `<p style="margin:0 0 12px 0;color:${SAGE_900};font-size:14px;line-height:1.7;">${withBold}</p>`;
+    })
+    .join("");
+
+  return html || `<p style="margin:0;color:${SAGE_900};font-size:14px;">&nbsp;</p>`;
+}
+
+/**
+ * Build a full email from an admin-provided template body. Wraps the
+ * author's text in the studio's sage HTML wrapper + footer so even the
+ * customised email still looks like the rest of the studio's brand.
+ *
+ * If `template` is empty/whitespace, returns `null` so the caller can
+ * fall back to the built-in hardcoded template.
+ */
+export function renderAdminTemplateEmail(params: {
+  template: string;
+  data: TemplateData;
+  title: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+}): { html: string } | null {
+  const resolved = formatEmail(params.template, params.data).trim();
+  if (!resolved) return null;
+
+  const bodyHtml = renderAuthorBodyHtml(resolved);
+
+  // We use `renderEmail` but stuff the entire author body into `body` and
+  // leave `intro` empty. Gives the admin full control of the wording.
+  const html = renderEmail({
+    title: params.title,
+    intro: "",
+    body: bodyHtml,
+    ctaLabel: params.ctaLabel,
+    ctaUrl: params.ctaUrl,
+  });
+  return { html };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Template A — Payment Receipt (transactional, ALWAYS sent)
 // ─────────────────────────────────────────────────────────────────────────────
 export interface PaymentReceiptParams {
@@ -314,11 +404,32 @@ export interface WaitlistPromotionParams {
   className: string;
   date: Date;
   startTime: string;
+  /** Admin-editable override from SiteSettings.emailTemplatePromotion. */
+  overrideTemplate?: string | null;
 }
 
 export function waitlistPromotionEmail(p: WaitlistPromotionParams) {
   const formattedDate = formatHebrewDate(p.date);
+  const subject = `בשורה טובה! התפנה לך מקום בשיעור ${p.className} ✨`;
 
+  // ── Admin template override (if provided) ──
+  if (p.overrideTemplate && p.overrideTemplate.trim()) {
+    const rendered = renderAdminTemplateEmail({
+      template: p.overrideTemplate,
+      data: {
+        name: p.name,
+        className: p.className,
+        date: formattedDate,
+        time: p.startTime,
+      },
+      title: `התפנה מקום ב-${p.className}`,
+      ctaLabel: "צפייה בשיעורים שלי",
+      ctaUrl: `${SITE_URL}/profile`,
+    });
+    if (rendered) return { subject, html: rendered.html };
+  }
+
+  // ── Built-in fallback (original hardcoded body) ──
   const body = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
       <tr>
@@ -340,7 +451,7 @@ export function waitlistPromotionEmail(p: WaitlistPromotionParams) {
   `;
 
   return {
-    subject: `בשורה טובה! התפנה לך מקום בשיעור ${p.className} ✨`,
+    subject,
     html: renderEmail({
       title: `התפנה מקום ב-${p.className}`,
       intro: `היי ${escapeHtml(p.name)}, התפנה מקום ועברת לרשימת המשתתפות. נתראה בקרוב!`,
@@ -359,10 +470,29 @@ export interface ReminderParams {
   className: string;
   date: Date;
   startTime: string;
+  /** Admin-editable override from SiteSettings.emailTemplateReminder. */
+  overrideTemplate?: string | null;
 }
 
 export function reminderEmail(p: ReminderParams) {
   const formattedDate = formatHebrewDate(p.date);
+  const subject = `תזכורת: נפגשים היום לשיעור ${p.className} בשעה ${p.startTime}`;
+
+  if (p.overrideTemplate && p.overrideTemplate.trim()) {
+    const rendered = renderAdminTemplateEmail({
+      template: p.overrideTemplate,
+      data: {
+        name: p.name,
+        className: p.className,
+        date: formattedDate,
+        time: p.startTime,
+      },
+      title: "תזכורת לשיעור היום",
+      ctaLabel: "צפייה בפרטי השיעור",
+      ctaUrl: `${SITE_URL}/profile`,
+    });
+    if (rendered) return { subject, html: rendered.html };
+  }
 
   const body = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
@@ -382,13 +512,148 @@ export function reminderEmail(p: ReminderParams) {
   `;
 
   return {
-    subject: `תזכורת: נפגשים היום לשיעור ${p.className} בשעה ${p.startTime}`,
+    subject,
     html: renderEmail({
       title: "תזכורת לשיעור היום",
       intro: `היי ${escapeHtml(p.name)}, רק מזכירים שהיום אנחנו נפגשים לתרגול. מחכים לך!`,
       body,
       ctaLabel: "צפייה בפרטי השיעור",
       ctaUrl: `${SITE_URL}/profile`,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Template E — Class Cancellation (transactional, ALWAYS sent)
+//
+//  Sent when an admin cancels a class instance or disables a whole
+//  class definition. We treat this as transactional because:
+//    (a) The student lost a booked seat — they need to know before
+//        showing up at an empty studio.
+//    (b) A credit has been refunded to their account — that's a
+//        financial change they're legally entitled to be told about.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ClassCancellationParams {
+  name: string;
+  className: string;
+  date: Date;
+  startTime: string;
+  creditRefunded: boolean;
+  reason?: string;
+  /** Admin-editable override from SiteSettings.emailTemplateCancellation. */
+  overrideTemplate?: string | null;
+}
+
+export function classCancellationEmail(p: ClassCancellationParams) {
+  const formattedDate = formatHebrewDate(p.date);
+  const subject = `השיעור ${p.className} בתאריך ${formattedDate} בוטל`;
+
+  if (p.overrideTemplate && p.overrideTemplate.trim()) {
+    const rendered = renderAdminTemplateEmail({
+      template: p.overrideTemplate,
+      data: {
+        name: p.name,
+        className: p.className,
+        date: formattedDate,
+        time: p.startTime,
+        reason: p.reason ?? "",
+        creditRefunded: p.creditRefunded ? "כן" : "לא",
+      },
+      title: "השיעור בוטל",
+      ctaLabel: "הרשמה לשיעור אחר",
+      ctaUrl: `${SITE_URL}/schedule`,
+    });
+    if (rendered) return { subject, html: rendered.html };
+  }
+
+  const body = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};width:80px;">השיעור</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(p.className)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">תאריך</td>
+        <td style="padding:4px 0;">${formattedDate}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">שעה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(p.startTime)}</td>
+      </tr>
+    </table>
+    ${
+      p.reason
+        ? `<div style="margin-top:14px;padding-top:14px;border-top:1px dashed ${SAGE_100};color:${SAGE_500};font-size:13px;line-height:1.6;">${escapeHtml(p.reason)}</div>`
+        : ""
+    }
+    <div style="margin-top:14px;color:${SAGE_900};font-size:14px;line-height:1.6;">
+      ${
+        p.creditRefunded
+          ? "<strong style=\"color:" + SAGE_600 + "\">הקרדיט שלך הוחזר אוטומטית לחשבון.</strong> את/ה מוזמנ/ת להירשם לשיעור אחר באותו השבוע."
+          : "הקרדיט שלך נשאר זמין בחשבון להרשמה לשיעור אחר."
+      }
+    </div>
+  `;
+
+  return {
+    subject,
+    html: renderEmail({
+      title: "השיעור בוטל",
+      intro: `היי ${escapeHtml(p.name)}, נאלצנו לבטל את השיעור שהיית רשומ/ה אליו. מצטערות על אי-הנוחות.`,
+      body,
+      ctaLabel: "הרשמה לשיעור אחר",
+      ctaUrl: `${SITE_URL}/schedule`,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Template F — Workshop Cancellation (transactional, ALWAYS sent)
+//
+//  Sent when an admin deletes/cancels a workshop that has paid
+//  registrations. The payment is marked as refund-pending — Noa
+//  will process the actual card refund through the PayMe dashboard.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface WorkshopCancellationParams {
+  name: string;
+  workshopTitle: string;
+  workshopDate: Date;
+  amountIls: number;
+}
+
+export function workshopCancellationEmail(p: WorkshopCancellationParams) {
+  const formattedDate = formatHebrewDate(p.workshopDate);
+  const formattedAmount = `${p.amountIls.toLocaleString("he-IL", { maximumFractionDigits: 2 })} ₪`;
+
+  const body = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};width:110px;">הסדנה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(p.workshopTitle)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">תאריך</td>
+        <td style="padding:4px 0;">${formattedDate}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">תשלום</td>
+        <td style="padding:4px 0;font-weight:600;">${formattedAmount}</td>
+      </tr>
+    </table>
+    <div style="margin-top:14px;color:${SAGE_900};font-size:14px;line-height:1.7;">
+      <strong style="color:${SAGE_600};">ההחזר הכספי יעובד בימים הקרובים</strong> ויופיע באשראי שלך תוך
+      1–7 ימי עסקים. אם לא ראית את ההחזר כעבור שבוע, כתבי לנו ונבדוק.
+    </div>
+  `;
+
+  return {
+    subject: `הסדנה ${p.workshopTitle} בוטלה — החזר כספי בדרך`,
+    html: renderEmail({
+      title: "הסדנה בוטלה",
+      intro: `היי ${escapeHtml(p.name)}, נאלצנו לבטל את הסדנה שנרשמת אליה. אנחנו נדאג שתקבלי החזר כספי מלא.`,
+      body,
+      ctaLabel: "יצירת קשר",
+      ctaUrl: `mailto:noayogaa@gmail.com`,
     }),
   };
 }

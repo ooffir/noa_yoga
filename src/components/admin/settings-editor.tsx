@@ -38,6 +38,17 @@ export function SettingsEditor() {
   const [aboutContent, setAboutContent] = useState("");
   const [profileImageUrl, setProfileImageUrl] = useState("");
   const [imagePreview, setImagePreview] = useState("");
+  // Email dispatch config
+  const [reminderHour, setReminderHour] = useState(9);
+  const [reminderDaysBefore, setReminderDaysBefore] = useState(1);
+  const [emailTemplateReminder, setEmailTemplateReminder] = useState("");
+  const [emailTemplatePromotion, setEmailTemplatePromotion] = useState("");
+  const [emailTemplateCancellation, setEmailTemplateCancellation] = useState("");
+  // Footer / public contact info
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [whatsappUrl, setWhatsappUrl] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [cards, setCards] = useState<CardData[]>([]);
@@ -66,6 +77,15 @@ export function SettingsEditor() {
         setProfileImageUrl(settings.profileImageUrl);
         setImagePreview(settings.profileImageUrl);
       }
+      if (settings.reminderHour != null) setReminderHour(settings.reminderHour);
+      if (settings.reminderDaysBefore != null) setReminderDaysBefore(settings.reminderDaysBefore);
+      if (typeof settings.emailTemplateReminder === "string") setEmailTemplateReminder(settings.emailTemplateReminder);
+      if (typeof settings.emailTemplatePromotion === "string") setEmailTemplatePromotion(settings.emailTemplatePromotion);
+      if (typeof settings.emailTemplateCancellation === "string") setEmailTemplateCancellation(settings.emailTemplateCancellation);
+      if (typeof settings.contactEmail === "string") setContactEmail(settings.contactEmail);
+      if (typeof settings.contactPhone === "string") setContactPhone(settings.contactPhone);
+      if (typeof settings.instagramUrl === "string") setInstagramUrl(settings.instagramUrl);
+      if (typeof settings.whatsappUrl === "string") setWhatsappUrl(settings.whatsappUrl);
 
       if (Array.isArray(cardsData) && cardsData.length > 0) {
         setCards(cardsData.map((c: any) => ({
@@ -102,7 +122,14 @@ export function SettingsEditor() {
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ heroTitle, heroSubtitle, cardsHeading, cardsSubheading, creditPrice, punchCard5Price, punchCardPrice, cancellationWindow, aboutTitle, aboutSubtitle, aboutContent, profileImageUrl }),
+        body: JSON.stringify({
+          heroTitle, heroSubtitle, cardsHeading, cardsSubheading,
+          creditPrice, punchCard5Price, punchCardPrice, cancellationWindow,
+          aboutTitle, aboutSubtitle, aboutContent, profileImageUrl,
+          reminderHour, reminderDaysBefore,
+          emailTemplateReminder, emailTemplatePromotion, emailTemplateCancellation,
+          contactEmail, contactPhone, instagramUrl, whatsappUrl,
+        }),
       });
       if (!res.ok) { toast.error("שמירה נכשלה"); return; }
       toast.success("ההגדרות נשמרו");
@@ -267,6 +294,219 @@ export function SettingsEditor() {
           </div>
           <Button onClick={handleSaveSettings} className="w-full rounded-2xl" disabled={saving || uploading}>
             {saving ? <Spinner className="h-4 w-4" /> : "שמירת הגדרות"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── פרטי יצירת קשר (פוטר + מיילים) ──
+          Edited here so Noa can change her email / phone / social links
+          without a code deploy. Values are rendered in the site footer
+          and also appear in email footers via NEXT_PUBLIC_SITE_URL.
+          Empty string hides the row from the footer. */}
+      <Card className="rounded-3xl">
+        <CardHeader>
+          <CardTitle>פרטי יצירת קשר</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              אימייל ליצירת קשר
+            </label>
+            <Input
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="noayogaa@gmail.com"
+            />
+            <p className="mt-1 text-[11px] text-sage-500">
+              מופיע בפוטר ובחתימה של כל המיילים שנשלחים אוטומטית מהאתר.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              טלפון (אופציונלי)
+            </label>
+            <Input
+              type="tel"
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+              placeholder="054-1234567"
+              dir="ltr"
+              className="text-left"
+            />
+            <p className="mt-1 text-[11px] text-sage-500">
+              השאירו ריק כדי להסתיר את שורת הטלפון מהפוטר.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              קישור לאינסטגרם
+            </label>
+            <Input
+              type="url"
+              dir="ltr"
+              className="text-left"
+              value={instagramUrl}
+              onChange={(e) => setInstagramUrl(e.target.value)}
+              placeholder="https://www.instagram.com/noaoffir/"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              קישור לוואטסאפ (קבוצה)
+            </label>
+            <Input
+              type="url"
+              dir="ltr"
+              className="text-left"
+              value={whatsappUrl}
+              onChange={(e) => setWhatsappUrl(e.target.value)}
+              placeholder="https://chat.whatsapp.com/..."
+            />
+          </div>
+          <Button
+            onClick={handleSaveSettings}
+            className="w-full rounded-2xl"
+            disabled={saving || uploading}
+          >
+            {saving ? <Spinner className="h-4 w-4" /> : "שמירת פרטי קשר"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── הגדרות הודעות ומיילים ── */}
+      <Card className="rounded-3xl">
+        <CardHeader>
+          <CardTitle>הגדרות הודעות ומיילים</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Variable legend — visible once at the top so it applies to all
+              three templates below. Admins can refer to it when editing. */}
+          <div className="rounded-2xl border border-sage-200 bg-sage-50 p-4 text-xs leading-relaxed text-sage-700">
+            <p className="font-bold text-sage-900 mb-1.5">משתנים זמינים</p>
+            <p className="text-sage-600 mb-2">
+              ניתן לשלב בטקסט כל אחד מהמשתנים הבאים — הם יוחלפו בזמן השליחה
+              בנתונים של כל נמענ/ת בנפרד.
+            </p>
+            <ul className="space-y-1">
+              <li>
+                <code dir="ltr" className="inline-block rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-sage-700">{"{{name}}"}</code>
+                <span className="mr-2">— שם הנמענ/ת</span>
+              </li>
+              <li>
+                <code dir="ltr" className="inline-block rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-sage-700">{"{{className}}"}</code>
+                <span className="mr-2">— שם השיעור</span>
+              </li>
+              <li>
+                <code dir="ltr" className="inline-block rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-sage-700">{"{{date}}"}</code>
+                <span className="mr-2">— תאריך השיעור בעברית</span>
+              </li>
+              <li>
+                <code dir="ltr" className="inline-block rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-sage-700">{"{{time}}"}</code>
+                <span className="mr-2">— שעת התחלה (למשל 09:00)</span>
+              </li>
+            </ul>
+            <p className="mt-3 text-[11px] text-sage-500">
+              טיפ לעיצוב: שורה ריקה = פסקה חדשה. טקסט מוקף ב-{" "}
+              <code dir="ltr" className="font-mono text-[11px]">**טקסט**</code>{" "}
+              יופיע מודגש. אם תשאירו שדה ריק, תשלח תבנית ברירת המחדל.
+            </p>
+          </div>
+
+          {/* ── Timing ── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 block">
+                שעת שליחה (0-23)
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={23}
+                value={reminderHour}
+                onChange={(e) =>
+                  setReminderHour(
+                    Math.min(23, Math.max(0, parseInt(e.target.value) || 0)),
+                  )
+                }
+              />
+              <p className="mt-1 text-[11px] text-sage-500">שעון ישראל</p>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 block">
+                ימים לפני השיעור
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={14}
+                value={reminderDaysBefore}
+                onChange={(e) =>
+                  setReminderDaysBefore(
+                    Math.min(14, Math.max(0, parseInt(e.target.value) || 0)),
+                  )
+                }
+              />
+              <p className="mt-1 text-[11px] text-sage-500">
+                0 = אותו יום · 1 = יום לפני
+              </p>
+            </div>
+          </div>
+
+          {/* ── Reminder template ── */}
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              תזכורת לשיעור הקרוב
+            </label>
+            <textarea
+              value={emailTemplateReminder}
+              onChange={(e) => setEmailTemplateReminder(e.target.value)}
+              rows={6}
+              placeholder={
+                "היי {{name}},\n\nמזכירים שמחר בשעה {{time}} נפגשים לשיעור {{className}}.\nשתיה, מזרן ואוויר נקי — אנחנו ניפגש שם.\n\nנועה 🌿"
+              }
+              className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y min-h-[120px]"
+            />
+          </div>
+
+          {/* ── Waitlist promotion template ── */}
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              הודעת מעבר מרשימת ההמתנה
+            </label>
+            <textarea
+              value={emailTemplatePromotion}
+              onChange={(e) => setEmailTemplatePromotion(e.target.value)}
+              rows={6}
+              placeholder={
+                "היי {{name}},\n\nחדשות טובות! התפנה מקום בשיעור {{className}} ב{{date}} בשעה {{time}}.\nקרדיט אחד נוצל מהחשבון שלך — נתראה על המזרן!\n\nנועה"
+              }
+              className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y min-h-[120px]"
+            />
+          </div>
+
+          {/* ── Class cancellation template ── */}
+          <div>
+            <label className="text-sm font-medium text-sage-700 mb-1 block">
+              הודעת ביטול שיעור
+            </label>
+            <textarea
+              value={emailTemplateCancellation}
+              onChange={(e) => setEmailTemplateCancellation(e.target.value)}
+              rows={6}
+              placeholder={
+                "היי {{name}},\n\nלצערנו נאלצנו לבטל את השיעור {{className}} ב{{date}} בשעה {{time}}.\n**הקרדיט הוחזר אוטומטית** לחשבון — את/ה מוזמנ/ת להירשם לשיעור אחר באותו השבוע.\n\nמצטערות על אי-הנוחות,\nנועה"
+              }
+              className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y min-h-[120px]"
+            />
+          </div>
+
+          <Button
+            onClick={handleSaveSettings}
+            className="w-full rounded-2xl"
+            disabled={saving || uploading}
+          >
+            {saving ? <Spinner className="h-4 w-4" /> : "שמירת הגדרות מיילים"}
           </Button>
         </CardContent>
       </Card>

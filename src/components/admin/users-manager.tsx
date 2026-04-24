@@ -1,11 +1,30 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { format } from "date-fns";
+import { he } from "date-fns/locale";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { PageLoader, Spinner } from "@/components/ui/loading";
-import { Search, Plus, Minus, CreditCard } from "lucide-react";
+import {
+  Search,
+  Plus,
+  Minus,
+  CreditCard,
+  History,
+  Check,
+  X,
+  Calendar,
+  Ticket,
+} from "lucide-react";
 import toast from "react-hot-toast";
 
 interface UserRow {
@@ -20,11 +39,64 @@ interface UserRow {
   totalBookings: number;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  History drill-down shape (must match /api/admin/users/[id]/history)
+// ─────────────────────────────────────────────────────────────────────
+interface HistoryBooking {
+  id: string;
+  status: "CONFIRMED" | "CANCELLED" | "NO_SHOW";
+  bookedAt: string;
+  cancelledAt: string | null;
+  attendedAt: string | null;
+  creditRefunded: boolean;
+  classTitle: string;
+  instructor: string;
+  date: string;
+  startTime: string;
+}
+
+interface HistoryPunchCard {
+  id: string;
+  totalCredits: number;
+  remainingCredits: number;
+  status: "ACTIVE" | "EXHAUSTED" | "EXPIRED";
+  purchasedAt: string;
+}
+
+interface HistoryPayload {
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+    phone: string | null;
+    role: "STUDENT" | "ADMIN";
+    createdAt: string;
+    directCredits: number;
+    punchCardCredits: number;
+    totalCredits: number;
+    receiveEmails: boolean;
+  };
+  upcoming: HistoryBooking[];
+  past: HistoryBooking[];
+  punchCards: HistoryPunchCard[];
+  summary: {
+    upcomingCount: number;
+    pastCount: number;
+    attendedCount: number;
+    cancelledCount: number;
+  };
+}
+
 export function UsersManager() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // History dialog state
+  const [historyUserId, setHistoryUserId] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryPayload | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -102,6 +174,22 @@ export function UsersManager() {
     setUpdatingId(null);
   };
 
+  const openHistory = useCallback(async (userId: string) => {
+    setHistoryUserId(userId);
+    setHistory(null);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/history`);
+      if (!res.ok) throw new Error("load failed");
+      const data = (await res.json()) as HistoryPayload;
+      setHistory(data);
+    } catch {
+      toast.error("טעינת ההיסטוריה נכשלה");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
   const filtered = users.filter(
     (u) =>
       !search ||
@@ -124,7 +212,8 @@ export function UsersManager() {
       </div>
 
       <p className="text-xs text-sage-400">
-        רשימה של כל המשתמשים שנרשמו לאתר ({users.length}) — תלמידות + מנהלות. משתמשים חדשים נוספים אוטומטית כשהם נרשמים.
+        רשימה של כל המשתמשים שנרשמו לאתר ({users.length}) — תלמידות +
+        מנהלות. לחיצה על השם פותחת היסטוריית הזמנות מלאה.
       </p>
 
       {filtered.length === 0 ? (
@@ -141,9 +230,14 @@ export function UsersManager() {
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-bold text-sage-900 text-sm truncate">
+                      {/* Clickable name — opens history drawer */}
+                      <button
+                        type="button"
+                        onClick={() => openHistory(user.id)}
+                        className="font-bold text-sage-900 text-sm truncate hover:text-sage-600 hover:underline text-right"
+                      >
                         {user.name || "ללא שם"}
-                      </p>
+                      </button>
                       {user.role === "ADMIN" && (
                         <span className="shrink-0 rounded-full border border-sage-300 bg-sage-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sage-700">
                           מנהלת
@@ -163,6 +257,16 @@ export function UsersManager() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-xl text-sage-500 hover:text-sage-700"
+                      onClick={() => openHistory(user.id)}
+                      title="היסטוריית הזמנות"
+                    >
+                      <History className="h-4 w-4" />
+                    </Button>
+
                     <Button
                       variant="outline"
                       size="icon"
@@ -204,6 +308,180 @@ export function UsersManager() {
           ))}
         </div>
       )}
+
+      {/* ─── History drawer ─── */}
+      <Dialog
+        open={historyUserId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setHistoryUserId(null);
+            setHistory(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>היסטוריית הזמנות</DialogTitle>
+            <DialogDescription>
+              {history ? history.user.email : "טוען..."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {historyLoading || !history ? (
+            <div className="py-12 text-center">
+              <Spinner className="mx-auto h-6 w-6" />
+            </div>
+          ) : (
+            <div className="space-y-5 mt-2">
+              {/* Summary strip */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <SummaryTile label="קרדיטים" value={history.user.totalCredits} />
+                <SummaryTile label="הקרובות" value={history.summary.upcomingCount} />
+                <SummaryTile label="השתתפה" value={history.summary.attendedCount} />
+                <SummaryTile label="ביטולים" value={history.summary.cancelledCount} />
+              </div>
+
+              {/* Active punch cards */}
+              {history.punchCards.length > 0 && (
+                <section>
+                  <h4 className="text-sm font-bold text-sage-700 mb-2 flex items-center gap-2">
+                    <Ticket className="h-4 w-4 text-sage-500" />
+                    כרטיסיות
+                  </h4>
+                  <div className="space-y-2">
+                    {history.punchCards.map((pc) => (
+                      <div
+                        key={pc.id}
+                        className="flex items-center justify-between rounded-2xl border border-sage-100 bg-sage-50/30 px-4 py-2.5"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-sage-900">
+                            {pc.remainingCredits}/{pc.totalCredits} קרדיטים זמינים
+                          </p>
+                          <p className="text-[11px] text-sage-400">
+                            נרכש{" "}
+                            {format(new Date(pc.purchasedAt), "d בMMMM yyyy", {
+                              locale: he,
+                            })}
+                          </p>
+                        </div>
+                        <PunchCardBadge status={pc.status} />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Upcoming */}
+              <section>
+                <h4 className="text-sm font-bold text-sage-700 mb-2 flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-emerald-500" />
+                  שיעורים עתידיים
+                </h4>
+                {history.upcoming.length === 0 ? (
+                  <p className="text-xs text-sage-400 italic py-2">אין הזמנות עתידיות</p>
+                ) : (
+                  <div className="space-y-2">
+                    {history.upcoming.map((b) => (
+                      <BookingRow key={b.id} b={b} />
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* Past */}
+              <section>
+                <h4 className="text-sm font-bold text-sage-700 mb-2 flex items-center gap-2">
+                  <History className="h-4 w-4 text-sage-400" />
+                  היסטוריית שיעורים ({history.summary.pastCount})
+                </h4>
+                {history.past.length === 0 ? (
+                  <p className="text-xs text-sage-400 italic py-2">עוד לא השתתפה בשיעורים</p>
+                ) : (
+                  <div className="space-y-2">
+                    {history.past.slice(0, 20).map((b) => (
+                      <BookingRow key={b.id} b={b} />
+                    ))}
+                    {history.past.length > 20 && (
+                      <p className="text-[11px] text-sage-400 text-center pt-1">
+                        מוצגות 20 רשומות אחרונות מתוך {history.past.length}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Small presentational helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function SummaryTile({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-2xl bg-sage-50/50 px-2 py-3">
+      <p className="text-lg font-bold text-sage-900">{value}</p>
+      <p className="text-[10px] text-sage-500">{label}</p>
+    </div>
+  );
+}
+
+function PunchCardBadge({ status }: { status: HistoryPunchCard["status"] }) {
+  const label =
+    status === "ACTIVE" ? "פעילה" : status === "EXHAUSTED" ? "נוצלה" : "פקעה";
+  const color =
+    status === "ACTIVE"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : "bg-sage-50 text-sage-600 border-sage-200";
+  return (
+    <span
+      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${color}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function BookingRow({ b }: { b: HistoryBooking }) {
+  const date = format(new Date(b.date), "EEE d בMMMM", { locale: he });
+
+  let statusEl: React.ReactNode = null;
+  if (b.status === "CANCELLED") {
+    statusEl = (
+      <span className="inline-flex items-center gap-1 text-[10px] text-red-500">
+        <X className="h-3 w-3" />
+        בוטל{b.creditRefunded ? " · הוחזר קרדיט" : " · ללא החזר"}
+      </span>
+    );
+  } else if (b.attendedAt) {
+    statusEl = (
+      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600">
+        <Check className="h-3 w-3" />
+        נכחה
+      </span>
+    );
+  } else if (b.status === "CONFIRMED") {
+    statusEl = (
+      <span className="inline-flex items-center gap-1 text-[10px] text-sage-500">
+        רשומה
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-sage-100 px-4 py-2.5">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-sage-900 truncate">{b.classTitle}</p>
+        <p className="text-[11px] text-sage-500">
+          {date} · {b.startTime} · {b.instructor}
+        </p>
+      </div>
+      <div className="shrink-0">{statusEl}</div>
     </div>
   );
 }

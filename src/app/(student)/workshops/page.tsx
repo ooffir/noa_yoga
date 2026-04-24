@@ -3,6 +3,8 @@ import Image from "next/image";
 import { Sparkles, CalendarDays, Clock, CheckCircle2, XCircle, Clock3 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
 import {
   completeWorkshopSuccess,
@@ -198,9 +200,19 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                     </span>
                   </div>
 
-                  <p className="text-sm leading-relaxed text-sage-500 mb-4 line-clamp-3 flex-1">
-                    {workshop.description}
-                  </p>
+                  {/*
+                   * Markdown rendering — mirrors articles. Reuses the
+                   * .prose-article styles (img responsive, pre-wrap, etc.)
+                   * so bullet lists + bold + images work consistently.
+                   * Constrained to max-h-60 with fade-out so an overly
+                   * long workshop description doesn't push the card
+                   * layout out of balance in the grid.
+                   */}
+                  <div className="prose-article mb-4 flex-1 max-h-60 overflow-hidden text-sm leading-relaxed text-sage-500">
+                    <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+                      {workshop.description}
+                    </ReactMarkdown>
+                  </div>
 
                   <div className="flex items-center justify-between pt-3 border-t border-sage-50">
                     <span className="text-xl font-bold text-sage-800">₪{workshop.price}</span>
@@ -209,7 +221,11 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                         מלא
                       </span>
                     ) : (
-                      <WorkshopRegisterButton workshopId={workshop.id} />
+                      <WorkshopRegisterButton
+                        workshopId={workshop.id}
+                        workshopTitle={workshop.title}
+                        workshopPrice={workshop.price}
+                      />
                     )}
                   </div>
                 </div>

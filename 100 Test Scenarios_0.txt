@@ -1,0 +1,121 @@
+### The "Noa Yogis" Master QA Matrix v2.0: 100 Test Scenarios
+
+#### Category 1: Trust & Integrity (Former Reds - Verification)
+1. Admin cancels a class instance; all booked students automatically receive 1 credit back.
+2. Admin cancels a class instance; all booked students receive the "Class Cancelled" email using the custom Admin template.
+3. Admin deletes a Workshop; all participants are marked as CANCELLED and receive a cancellation notice.
+4. PayMe sends a 'refunded' webhook; the PunchCard is automatically frozen/exhausted in the DB.
+5. PayMe webhook encounters a DB error; system returns 500, and PayMe retries successfully later.
+6. Admin removes a student from a class; the student is granted a credit refund automatically.
+7. Class capacity is increased from 10 to 12; the first 2 students on the waitlist are promoted immediately.
+8. A student promoted via capacity increase receives the "Waitlist Promotion" email instantly.
+9. Student on a waitlist clicks "Leave Waitlist"; they are removed and status updated to CANCELLED.
+10. Workshop registration: Student cannot proceed without checking the "Cancellation Policy" consent box.
+
+#### Category 2: Dynamic Email & Settings
+11. Admin changes 'reminderHour' to 14:00; Cron job only fires at 14:00.
+12. Admin sets 'reminderDaysBefore' to 2; Students get reminders 48 hours before class.
+13. Admin edits 'emailTemplateReminder' with custom text; Student receives the new custom text.
+14. Admin uses {{name}} in a template; the email renders "היי עומר" correctly.
+15. Admin uses {{className}} in a template; the email renders "ויניאסה זורמת" correctly.
+16. Admin leaves a template empty; system falls back to the hardcoded default text.
+17. Daily reminder Cron job runs at the wrong hour; system skips execution based on Settings.
+18. Waitlist promotion email uses the custom template saved in Admin settings.
+19. Special characters (emojis/Hebrew) in templates render correctly in emails.
+20. Admin changes a template; the change is applied to the very next email sent.
+
+#### Category 3: Authentication & Security
+21. New user signs up; Clerk webhook creates DB user.
+22. Admin login: Access to /admin/settings is granted.
+23. Student login: Access to /admin/settings returns 403 or redirect.
+24. User session expires; attempting to book redirects to login.
+25. Admin navigates to student views; system functions normally.
+26. Clerk metadata update: Admin status syncs correctly.
+27. Unauthenticated user attempts to access /api/admin/ endpoints; receives 401.
+28. Logout clears all local states and session cookies.
+29. User tries to edit another user's profile via API; blocked by server.
+30. Forgotten password flow via Clerk returns user to the site correctly.
+
+#### Category 4: Payments & Punch Cards
+31. Purchase 1-session: 1 credit added to DB.
+32. Purchase 5-session: 5 credits added to DB (Price matches SiteSettings).
+33. Purchase 10-session: 10 credits added to DB.
+34. Payment success page polls until DB update is confirmed.
+35. Payment failure page displays clear message; no credits granted.
+36. Student closes tab before PayMe redirect; no credits until webhook fires.
+37. Rapid double-click on "Purchase" is blocked by UI loading state.
+38. SiteSettings price change: New price is reflected on /pricing cards immediately.
+39. Payment success: User receives a receipt email.
+40. Admin manually adds credits to a user; balance updates in real-time.
+
+#### Category 5: Booking Logic & Edge Cases
+41. Student with 1 credit books a class; balance becomes 0.
+42. Student with 0 credits tries to book; "Purchase" dialog opens.
+43. Student tries to book two classes at the same time; handled by system.
+44. Student cancels 24h before; credit is returned.
+45. Student cancels 2h before (Late); booking removed, credit NOT returned.
+46. Cancellation window boundary: Cancel exactly at the window limit.
+47. Two students book the last spot simultaneously; DB transaction prevents overbooking.
+48. Student tries to book a past class; blocked by UI and API.
+49. Booking a class already in; blocked.
+50. UI shows "Full" when capacity is reached.
+
+#### Category 6: Waitlist Management
+51. Class full: Student joins waitlist.
+52. Waitlist student cancels their spot; position updates for others.
+53. Booked student cancels early; #1 on waitlist is promoted.
+54. Promoted student has 0 credits; check skip/hold logic.
+55. Admin views attendance; waitlist is visible.
+56. Admin manually promotes a waitlist student.
+57. Waitlist promotion fires; student's punch card is deducted.
+58. Waitlist promotion email contains the specific class time and date.
+59. Multiple cancellations in a full class; waitlist students promoted in order.
+60. Waitlist UI shows student's position (e.g., "You are #2").
+
+#### Category 7: Workshops
+61. Student books workshop; handled as direct payment, not punch card.
+62. Workshop reaches capacity; "Register" button disables.
+63. Workshop price in Admin updated; new registrants pay new price.
+64. Workshop details (Markdown) render correctly on the page.
+65. Admin creates workshop with an image; image displays responsively.
+66. Workshop registration requires "Cancellation Policy" checkbox.
+67. Workshop cancellation by Admin: Emails sent, registrations cancelled.
+68. Student attempts to use 1 session credit for a workshop; blocked.
+69. Workshop date passes; workshop moves to "Past Workshops".
+70. Workshop receipt email includes workshop-specific name.
+
+#### Category 8: Admin Dashboard & Analytics
+71. Admin dashboard shows total revenue for current month.
+72. "Active Students" count reflects users with >0 credits.
+73. Admin searches for a student in the user list.
+74. Admin views a specific user's booking history.
+75. Analytics chart displays 1, 5, and 10 session purchases.
+76. Admin creates a recurring class; instances are generated.
+77. Admin deletes a single instance; others remain.
+78. Admin updates SiteSettings (Logo/Contact); footer updates.
+79. Admin uses "Complete Manually" for a stuck payment; credits granted.
+80. Analytics filters out "FAILED" or "CANCELLED" payments.
+
+#### Category 9: Articles & UI
+81. Markdown article: Titles and bold text render correctly.
+82. Markdown article: Bullet points and lists display correctly.
+83. Markdown article: Paragraphs have vertical spacing (pre-wrap).
+84. Images in articles do not overflow on mobile screens.
+85. Article list shows thumbnails correctly.
+86. Empty article content displays a graceful fallback.
+87. Schedule "Pills" show correct status (Booked, Waitlist, Full).
+88. Mobile navigation menu opens/closes smoothly.
+89. Right-to-Left (RTL) alignment is consistent.
+90. Favicon and site metadata are present.
+
+#### Category 10: Performance & Emails
+91. Payment receipt bypasses marketing opt-out.
+92. Receipt email is RTL and Sage green.
+93. Booking confirmation email sent to opted-in users.
+94. Opted-out user does NOT receive booking confirmation.
+95. Cron job for reminders runs hourly but only sends at 'reminderHour'.
+96. Reminder email targets students booked for 'reminderDaysBefore'.
+97. System handles SMTP error without crashing the booking.
+98. Email sender name is "Noa Yogis".
+99. System handles large student lists (>50) in a single class.
+100. Rapid navigation between articles and schedule is smooth.

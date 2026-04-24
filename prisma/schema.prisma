@@ -315,6 +315,30 @@ model SiteSettings {
   punchCardPrice     Int @default(350) @map("punch_card_price")  // 10-session card
   cancellationWindow Int @default(6) @map("cancellation_window")
 
+  // ── Email dispatch config ──────────────────────────────────────
+  // reminderHour: hour-of-day (0-23, Asia/Jerusalem) when the daily
+  //   reminder cron actually sends. The cron itself runs hourly so the
+  //   admin can change this without a redeploy.
+  // reminderDaysBefore: how many days before a class to send the
+  //   reminder. 1 = day-before (evening prior); 0 = same-day.
+  reminderHour       Int @default(9) @map("reminder_hour")
+  reminderDaysBefore Int @default(1) @map("reminder_days_before")
+
+  // Admin-editable email body templates. Empty string = use built-in
+  // fallback. Supports Markdown-ish syntax + {{variable}} placeholders
+  // resolved per-recipient in src/lib/email.ts → formatEmail().
+  emailTemplateReminder     String @default("") @map("email_template_reminder")
+  emailTemplatePromotion    String @default("") @map("email_template_promotion")
+  emailTemplateCancellation String @default("") @map("email_template_cancellation")
+
+  // ── Public contact / footer info (editable by admin) ──
+  // All optional — empty strings mean "hide from footer" (the renderer
+  // skips those rows). This lets Noa turn a link off without deleting it.
+  contactEmail  String @default("noayogaa@gmail.com") @map("contact_email")
+  contactPhone  String @default("") @map("contact_phone")
+  instagramUrl  String @default("https://www.instagram.com/noaoffir/") @map("instagram_url")
+  whatsappUrl   String @default("https://chat.whatsapp.com/F0VZnlRRPbg9td08thtOjK") @map("whatsapp_url")
+
   @@map("site_settings")
 }
 

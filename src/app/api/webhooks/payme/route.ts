@@ -4,9 +4,11 @@ import {
   completeWorkshopSuccess,
   failPayment,
   cancelWorkshop,
+  refundPayment,
   resolveCustomRef,
   isPaymeSuccess,
   isPaymeFailure,
+  isPaymeRefund,
 } from "@/lib/payments";
 import { verifyPaymeSale } from "@/lib/payme-verify";
 
@@ -23,9 +25,16 @@ import { verifyPaymeSale } from "@/lib/payme-verify";
  *   actually captured. This stops a forged POST with a bogus custom_1
  *   from minting credits. See src/lib/payme-verify.ts for the logic.
  *
- * Business logic lives in `src/lib/payments.ts` so the /payments/success
- * return-URL page can use the same idempotent completion helpers if the
- * webhook is delayed or missing.
+ * Reliability:
+ *   If our DB handler throws, we return HTTP 500 so PayMe retries the
+ *   webhook (their schedule is forgiving: minutes → hours). Without this,
+ *   transient DB errors would silently drop real payments.
+ *
+ * Refunds:
+ *   When Noa issues a refund in the PayMe dashboard, PayMe sends a
+ *   follow-up IPN with `sale_status: "refunded"`. We flip the stored
+ *   Payment to REFUNDED and zero-out the associated PunchCard so the
+ *   student can't book further classes with revoked credits.
  */
 
 export const dynamic = "force-dynamic";
@@ -75,15 +84,16 @@ export async function POST(req: Request) {
 
   const claimedSuccess = isPaymeSuccess(payload);
   const claimedFailure = isPaymeFailure(payload);
+  const claimedRefund = isPaymeRefund(payload);
   const paymeSaleCode = payload.payme_sale_code || payload.sale_code;
 
   // ─── Independent verification for SUCCESS claims ───
   // If the IPN says "success", we don't trust it — we re-check via PayMe's
-  // server-to-server API. Failure / cancelled claims are not lucrative to
-  // forge (they'd just cancel a user's registration) so we don't gate
-  // those with verification, but we still require a valid custom_1.
+  // server-to-server API. Failure / cancelled / refund claims are not
+  // lucrative to forge (they'd just cancel or revoke a user's access) so
+  // we skip that step for them, but we still require a valid custom_1.
   let verifiedSuccess = false;
-  if (claimedSuccess) {
+  if (claimedSuccess && !claimedRefund) {
     if (!paymeSaleCode) {
       // Success claim without a PayMe sale code is malformed — either a bug
       // on PayMe's side or a forged request. Either way, reject loudly.
@@ -104,8 +114,7 @@ export async function POST(req: Request) {
       verification.reason === "missing_config"
     ) {
       // Can't reach PayMe / transient error → return 500 so PayMe retries
-      // later. Better than silently dropping a real payment. PayMe's
-      // retry cadence is forgiving (minutes → hours).
+      // later. Better than silently dropping a real payment.
       console.error(
         "[payme-webhook] verify transient failure, asking PayMe to retry:",
         verification,
@@ -126,23 +135,39 @@ export async function POST(req: Request) {
     }
   }
 
+  // ─── Dispatch ───
+  // Any handler failure below returns 500 so PayMe will retry. Previous
+  // behavior (return 200 on error) silently dropped real payments — the
+  // admin rescue page was the only fix. We prefer the provider's own
+  // retry mechanism which is designed for exactly this case.
   try {
     if (resolved.kind === "workshop") {
-      if (verifiedSuccess) {
+      if (claimedRefund) {
+        // Workshop refunds: mark the registration cancelled. The actual
+        // card-side refund is done by Noa in the PayMe dashboard — this
+        // just keeps our DB in sync so the student's seat is released.
+        await cancelWorkshop(resolved.id);
+      } else if (verifiedSuccess) {
         await completeWorkshopSuccess(resolved.id);
       } else if (claimedFailure) {
         await cancelWorkshop(resolved.id);
       }
     } else {
-      if (verifiedSuccess) {
+      if (claimedRefund) {
+        await refundPayment(resolved.id);
+      } else if (verifiedSuccess) {
         await completePaymentSuccess(resolved.id, paymeSaleCode);
       } else if (claimedFailure) {
         await failPayment(resolved.id);
       }
     }
   } catch (err) {
-    console.error("[payme-webhook] handler error:", err);
-    return NextResponse.json({ ok: true, note: "handler error (logged)" });
+    // Let PayMe retry. Every handler here is idempotent so retries are safe.
+    console.error("[payme-webhook] handler failed — returning 500 for retry:", err);
+    return NextResponse.json(
+      { error: "handler error — please retry" },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ ok: true });

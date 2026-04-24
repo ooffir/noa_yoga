@@ -84,7 +84,7 @@ export default async function SchedulePage({ searchParams }: Props) {
     }),
     prisma.waitlistEntry.findMany({
       where: { userId: dbUser.id, status: "WAITING" },
-      select: { classInstanceId: true },
+      select: { id: true, classInstanceId: true, createdAt: true },
     }),
     prisma.siteSettings.findUnique({
       where: { id: "main" },
@@ -96,6 +96,29 @@ export default async function SchedulePage({ searchParams }: Props) {
       },
     }).catch(() => null),
   ]);
+
+  // ── Compute "you are #N in line" for each waitlist entry ──
+  // Typical student sits on 0-3 waitlists at once, so the N+1 query
+  // cost is negligible. Position = count of WAITING entries for the
+  // same classInstance with an earlier createdAt, + 1 (for themselves).
+  //
+  // This ignores the `position` integer column entirely because that
+  // column can have gaps after leaveWaitlist() / EXPIRED skips and the
+  // admin-manual-promote path. Ranking by createdAt is always correct
+  // regardless of state transitions.
+  const waitlistPositionByInstance: Record<string, number> = {};
+  await Promise.all(
+    userWaitlist.map(async (entry) => {
+      const ahead = await prisma.waitlistEntry.count({
+        where: {
+          classInstanceId: entry.classInstanceId,
+          status: "WAITING",
+          createdAt: { lt: entry.createdAt },
+        },
+      });
+      waitlistPositionByInstance[entry.classInstanceId] = ahead + 1;
+    }),
+  );
 
   const creditPrice = settings?.creditPrice ?? 50;
   const punchCard5Price = settings?.punchCard5Price ?? 200;
@@ -190,7 +213,11 @@ export default async function SchedulePage({ searchParams }: Props) {
                             {isBooked ? (
                               <span className="inline-flex items-center rounded-full bg-sage-100 px-3 py-0.5 text-xs font-medium text-sage-700">רשום/ה</span>
                             ) : isOnWaitlist ? (
-                              <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-3 py-0.5 text-xs font-medium text-amber-700">בהמתנה</span>
+                              <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-3 py-0.5 text-xs font-medium text-amber-700">
+                                {waitlistPositionByInstance[inst.id]
+                                  ? `מקום ${waitlistPositionByInstance[inst.id]} בתור`
+                                  : "בהמתנה"}
+                              </span>
                             ) : isAvailable ? (
                               <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-3 py-0.5 text-xs font-medium text-emerald-700">יש מקום</span>
                             ) : (
@@ -232,7 +259,18 @@ export default async function SchedulePage({ searchParams }: Props) {
                               cancellationHoursBefore={cancellationHours}
                             />
                           ) : isOnWaitlist ? (
-                            <span className="text-xs text-amber-600 font-medium whitespace-nowrap">ברשימת המתנה</span>
+                            <BookButton
+                              classInstanceId={inst.id}
+                              action="leave-waitlist"
+                              label="יציאה מהמתנה"
+                              classTitle={def.title}
+                              classDate={inst.date.toISOString()}
+                              classStartTime={inst.startTime}
+                              creditPrice={creditPrice}
+                              punchCard5Price={punchCard5Price}
+                              punchCardPrice={punchCardPrice}
+                              cancellationHoursBefore={cancellationHours}
+                            />
                           ) : isAvailable ? (
                             <BookButton
                               classInstanceId={inst.id}

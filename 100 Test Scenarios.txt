@@ -1,0 +1,123 @@
+### The "Noa Yogis" Master QA Matrix: 100 Test Scenarios
+
+Please review the current Next.js application codebase against these 100 user scenarios. For each scenario, verify if the current logic (UI, API routes, Webhooks, DB transactions) fully supports it without breaking, leaking data, or allowing exploits.
+
+#### Category 1: Authentication & Roles (1-10)
+1. New student signs up via Clerk; DB user row is created automatically via webhook.
+2. User logs in; redirected correctly to `/schedule` (or homepage).
+3. `noayogaa@gmail.com` logs in; system immediately recognizes them as ADMIN.
+4. Admin sees the Admin sidebar/dashboard; Student does not.
+5. Student attempts to navigate manually to `/admin/settings`; receives 401/redirect.
+6. Admin attempts to navigate to student views; UI functions normally.
+7. Unauthenticated user clicks "Book Class"; prompted to sign in.
+8. Unauthenticated user visits `/terms` or `/privacy`; pages load perfectly.
+9. User logs out; session ends, and UI updates to "Guest" state.
+10. System handles missing user metadata from Clerk gracefully.
+
+#### Category 2: Catalog, Pricing & UI (11-20)
+11. Student visits `/pricing`; sees exactly 3 options (1, 5, 10 credits).
+12. Pricing cards display correct dynamic prices fetched from `SiteSettings`.
+13. Mobile view stacks pricing cards vertically without UI breaking.
+14. Checkout popup (from schedule) shows all 3 pricing options when student has 0 credits.
+15. Selecting the 5-session card triggers PayMe with the exact correct price.
+16. Default fallback prices load if the DB `SiteSettings` fetch temporarily fails.
+17. Student clicks "Pay" twice rapidly; button disables, preventing double PayMe session generation.
+18. Footer links (Terms, Privacy, Contact) route correctly.
+19. WhatsApp and Instagram links open in new tabs.
+20. Site logo and `favicon` render correctly on all devices.
+
+#### Category 3: The Payment Gateway (PayMe Webhooks) (21-30)
+21. Student completes 1-class purchase; PayMe webhook fires; exactly 1 credit added.
+22. Student completes 5-class purchase; exactly 5 credits added.
+23. Student completes 10-class purchase; exactly 10 credits added.
+24. Webhook fires twice for the same transaction (Idempotency test); DB ignores second request, no duplicate credits.
+25. Payment completes, but DB transaction fails; webhook throws 500, PayMe retries later.
+26. PayMe returns `status="FAILED"`; user is redirected to failure page, no credits given.
+27. Admin refunds a payment in PayMe dashboard; (Does the system handle this manually or automatically?).
+28. `PendingPoller` on `/payments/success` successfully detects DB update and shows green success banner.
+29. Poller hits max retries; shows manual "Refresh" button.
+30. Student attempts to manipulate URL parameters on success page; UI relies only on DB state, no false success.
+
+#### Category 4: Class Booking Engine (31-40)
+31. Student with 1+ credits books a class; credit is deducted, DB `Booking` created.
+32. Student books a class; success Toast appears, UI reflects "Booked" state.
+33. Student tries to book a class they are already booked for; system prevents it.
+34. Student with 0 credits tries to book; system pops up the 1/5/10 purchase dialog.
+35. Student tries to book a class that is full; system offers "Join Waitlist".
+36. Student joins waitlist; 0 credits deducted at this stage.
+37. Student is on waitlist, cancels their spot; removed from waitlist smoothly.
+38. Two students try to book the last available spot at the exact same millisecond; DB serializable transaction prevents overbooking.
+39. Student tries to book a class that has already started/passed; system prevents it.
+40. UI displays correct capacity (e.g., "3 spots left" vs "Full").
+
+#### Category 5: Cancellation Policy (The 6-Hour Rule) (41-50)
+41. Student cancels a class 24 hours before; booking removed, 1 credit refunded to account.
+42. Student cancels a class exactly on the cancellation window boundary.
+43. Student tries to cancel a class 2 hours before; UI warns them credit will be lost.
+44. Student confirms late cancellation; booking removed, credit is NOT refunded.
+45. Admin changes policy from 6 hours to 4 hours in Settings.
+46. Student cancels 5 hours before (under new 4h policy); credit IS refunded.
+47. Schedule UI text updates automatically to reflect "Cancel up to 4 hours".
+48. Student cancels, but DB transaction fails; system rolls back, student still booked.
+49. Admin removes a student from a class manually; Admin chooses whether to refund credit or not.
+50. Admin deletes an entire class instance; all booked students get credits refunded automatically.
+
+#### Category 6: Waitlist Promotions (51-60)
+51. Class is full, Student A is #1 on waitlist, Student B is #2.
+52. Booked student cancels early; Student A is promoted to booked.
+53. Student A's credit is automatically deducted upon promotion.
+54. Student A has 0 credits when promoted; what happens? (Ensure system handles: e.g., skips them, or books and puts account in negative, or sends payment link).
+55. Booked student cancels LATE; waitlist promotion logic still fires correctly.
+56. Student A is promoted; receives the `waitlistPromotionEmail`.
+57. Admin increases class capacity from 10 to 12; top 2 waitlist students promoted automatically.
+58. Admin manually adds a student to a full class; system allows Admin override (capacity becomes 11/10).
+59. Waitlist UI shows correct position (e.g., "You are #1 on the waitlist").
+60. Waitlist promotion cron job (if applicable) runs without crashing.
+
+#### Category 7: Workshops (61-70)
+61. Student navigates to `/workshops`; sees list of upcoming workshops.
+62. Student registers for workshop; PayMe flow starts (distinct from punch cards).
+63. Student completes workshop payment; registered, capacity decreases.
+64. Student tries to register for workshop using Punch Card credits; system prevents this.
+65. Workshop is full; registration button is disabled (or changes to waitlist).
+66. Workshop cancellation policy (e.g., 7 days) is displayed clearly.
+67. Admin creates a new workshop with an image; renders correctly.
+68. Admin edits workshop price; future registrations use new price.
+69. Admin deletes a workshop; handles existing registrations gracefully.
+70. Workshop receipt email contains specific workshop details, not generic class info.
+
+#### Category 8: Admin Dashboard & Settings (71-80)
+71. Admin visits `/admin/analytics`; revenue chart loads correctly, including 5-session card data.
+72. Admin visits `/admin/users`; list of all users and their credit balances loads.
+73. Admin manually adds 2 credits to a user; DB updates immediately.
+74. Admin views `/admin/payments`; sees list of all PayMe transactions.
+75. Admin resolves a "Stuck Payment" manually via the dashboard.
+76. Admin creates a recurring class definition (e.g., "Every Sunday 08:00").
+77. Cron job generates the specific class instances for the next 30 days based on the definition.
+78. Admin edits a specific instance (e.g., changes teacher for this Tuesday only); future recurring classes unaffected.
+79. Admin changes global Credit Price in settings; `/pricing` updates immediately.
+80. Admin views attendance list for a specific class; sees booked students and waitlist.
+
+#### Category 9: Articles & Markdown (Bug Fix Check) (81-90)
+81. Admin creates a new article using Markdown (bold, headings, bullet points).
+82. Admin uses double `Enter` to create paragraphs.
+83. Article is saved and displayed on `/articles` list.
+84. Student views `/articles/[slug]`; `react-markdown` renders paragraphs with correct spacing.
+85. Article content breaks lines correctly, not rendering as a single solid block.
+86. Admin adds an image URL in the Markdown; it renders responsive on mobile.
+87. Admin edits an existing article; changes reflect immediately.
+88. Admin deletes an article; it disappears from the student view.
+89. Long article titles truncate or wrap gracefully on UI cards.
+90. Empty article content gracefully handled (no crash).
+
+#### Category 10: Automated Emails & Privacy (91-100)
+91. Payment receipt email is sent immediately after punch card purchase (Bypasses marketing opt-out).
+92. Receipt email visually RTL, Sage green palette, displays exact amount and transaction ID.
+93. Booking confirmation email sent to user (Marketing).
+94. User toggles OFF "Receive Emails" in `/profile` preferences.
+95. Opted-out user books a class; NO booking confirmation email sent.
+96. Opted-out user buys a workshop; DOES receive the payment receipt.
+97. Cron job runs at 09:00 for class reminders (`reminderEmail`).
+98. Reminder email sent ONLY to users opted-in and booked for today.
+99. System handles email bounce or SMTP error without crashing the booking transaction.
+100. `EMAIL_FROM` properly formats as "Noa Yogis <noayogaa@gmail.com>" so replies go straight to Noa.

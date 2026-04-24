@@ -28,9 +28,23 @@
 @layer components {
   .prose-article p {
     margin-bottom: 1.1rem;
+    /* Preserve author whitespace inside a paragraph (intentional spacing,
+     * Hebrew punctuation, etc.) without creating visible double-breaks for
+     * newlines that remark-breaks already turns into <br> tags. */
+    white-space: pre-wrap;
   }
   .prose-article p:last-child {
     margin-bottom: 0;
+  }
+  /* Markdown-embedded images must never overflow the reading column.
+   * react-markdown renders raw <img>, so without these rules a large
+   * image from the author would break the mobile layout. */
+  .prose-article img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 1.25rem auto;
+    border-radius: 16px;
   }
   .prose-article h1 {
     font-size: 1.625rem;

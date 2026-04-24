@@ -122,6 +122,63 @@ export async function failPayment(paymentId: string): Promise<void> {
   });
 }
 
+/**
+ * Mark a previously COMPLETED Payment as REFUNDED and revoke the
+ * associated PunchCard. Idempotent — second call is a no-op.
+ *
+ * Called when PayMe's webhook signals `sale_status: "refunded"` (i.e.
+ * Noa issued a refund in the PayMe dashboard). Wraps the two updates
+ * in a transaction so we never end up with REFUNDED payment + still
+ * active punch card.
+ *
+ * We don't try to "take back" credits that were already spent on
+ * bookings — that would invalidate legitimate bookings the student
+ * already attended. We only zero out the remainingCredits on the
+ * card, so they can't spend anything further.
+ */
+export async function refundPayment(
+  paymentId: string,
+): Promise<{ kind: "refunded" | "already_refunded" | "not_found" | "not_completed" }> {
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    include: { punchCard: true },
+  });
+  if (!payment) return { kind: "not_found" };
+  if (payment.status === "REFUNDED") return { kind: "already_refunded" };
+  if (payment.status !== "COMPLETED") return { kind: "not_completed" };
+
+  await db.$transaction([
+    db.payment.update({
+      where: { id: paymentId },
+      data: { status: "REFUNDED" },
+    }),
+    // Freeze the punch card: zero remaining credits + mark EXHAUSTED.
+    // A null branch covers a rare state where the Payment succeeded but
+    // the PunchCard row never got created (e.g. partial write).
+    ...(payment.punchCard
+      ? [
+          db.punchCard.update({
+            where: { id: payment.punchCard.id },
+            data: {
+              remainingCredits: 0,
+              status: "EXHAUSTED",
+            },
+          }),
+        ]
+      : []),
+  ]);
+
+  try {
+    revalidatePath("/profile");
+    revalidatePath("/schedule");
+  } catch {}
+
+  console.warn(
+    `[payments] refund applied: paymentId=${paymentId}, punchCardId=${payment.punchCard?.id ?? "none"}`,
+  );
+  return { kind: "refunded" };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Workshop registrations
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,4 +286,23 @@ export function isPaymeFailure(payload: Record<string, string | undefined>): boo
     status === "canceled" ||
     status === "error"
   );
+}
+
+/**
+ * Detect a refund callback from PayMe. PayMe uses (at least) these
+ * spellings depending on endpoint/region:
+ *   - payme_sale_status: "refunded"
+ *   - sale_status:       "refunded"
+ *   - type:              "refund"
+ */
+export function isPaymeRefund(payload: Record<string, string | undefined>): boolean {
+  const status = (
+    payload.payme_sale_status ||
+    payload.sale_status ||
+    payload.payme_status ||
+    payload.status ||
+    ""
+  ).toLowerCase();
+  const type = (payload.type || payload.event || "").toLowerCase();
+  return status === "refunded" || status === "refund" || type === "refund";
 }
