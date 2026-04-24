@@ -5,24 +5,22 @@ import { addDays, startOfDay, endOfDay } from "date-fns";
 import { getEmailDispatchConfig } from "@/lib/site-settings";
 
 /**
- * Hourly cron — "should I send reminders right now?"
+ * Daily reminder cron.
  *
- * Vercel cron runs this every hour (see vercel.json). Inside the handler:
- *   1. Read `reminderHour` + `reminderDaysBefore` from SiteSettings.
- *   2. If Jerusalem-time hour ≠ reminderHour → return 204 no-op.
- *   3. Otherwise query bookings for classes N days from now and dispatch
- *      using the admin-editable reminder template.
+ * Schedule: fires once per day at 07:00 UTC (~09:00-10:00 Israel,
+ * depending on DST). Defined in vercel.json.
  *
- * Why hourly instead of a fixed 09:00 schedule?
- *   The admin can change `reminderHour` from the dashboard; with a fixed
- *   Vercel cron, a UI change would only take effect on the next deploy.
- *   An hourly cron that gates internally is the simplest way to honour the
- *   admin's choice without asking them to edit vercel.json.
+ * Why not hourly with an in-handler gate on `reminderHour`?
+ *   The Hobby plan on Vercel allows only one cron invocation per day
+ *   per schedule — hourly expressions (`0 * * * *`) fail the entire
+ *   deploy. So the cron fires once, unconditionally, and we read
+ *   `reminderDaysBefore` from SiteSettings to decide which day's
+ *   bookings to target.
  *
- * Why Jerusalem time?
- *   The studio operates in Israel; the admin's UI input represents local
- *   time. Vercel crons run in UTC, so we compute the current hour in
- *   Asia/Jerusalem before comparing. Handles DST automatically via Intl.
+ * `reminderHour` in SiteSettings is retained for future use (if Noa
+ * upgrades to Vercel Pro we can restore the hourly gated pattern) but
+ * currently has no runtime effect — the cron always runs at the
+ * vercel.json time regardless of that setting.
  */
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -32,21 +30,6 @@ export async function GET(req: Request) {
 
   try {
     const config = await getEmailDispatchConfig();
-
-    // ── Hour-of-day gate (Asia/Jerusalem) ──
-    const jerusalemHourStr = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Jerusalem",
-      hour: "numeric",
-      hour12: false,
-    }).format(new Date());
-    const currentHour = parseInt(jerusalemHourStr, 10);
-
-    if (currentHour !== config.reminderHour) {
-      return NextResponse.json({
-        skipped: true,
-        reason: `current hour ${currentHour} ≠ reminderHour ${config.reminderHour}`,
-      });
-    }
 
     // ── Window: the day `reminderDaysBefore` from now, local midnight→11:59PM ──
     const targetDay = addDays(new Date(), config.reminderDaysBefore);
@@ -98,7 +81,6 @@ export async function GET(req: Request) {
       sent,
       skipped,
       total: bookings.length,
-      hour: currentHour,
       daysBefore: config.reminderDaysBefore,
     });
   } catch (error) {
