@@ -234,13 +234,33 @@ export function ArticlesManager() {
 
             <div>
               <label className="text-sm font-medium text-sage-700 mb-1 block">תוכן הכתבה</label>
-              <div className="mb-2 text-xs text-sage-400">
-                ניתן לכתוב HTML: &lt;b&gt;מודגש&lt;/b&gt;, &lt;ul&gt;&lt;li&gt;...&lt;/li&gt;&lt;/ul&gt;, &lt;p&gt;פסקה&lt;/p&gt;
+              <div className="mb-2 rounded-xl bg-sage-50 px-3 py-2 text-xs leading-relaxed text-sage-500">
+                <span className="font-semibold text-sage-700">עיצוב הטקסט (Markdown):</span>{" "}
+                שורה ריקה בין שורות יוצרת פסקה חדשה. שורה יחידה של Enter שוברת שורה.
+                <br />
+                <span dir="ltr" className="inline-block font-mono text-[11px]">
+                  **מודגש**
+                </span>{" "}
+                למודגש,{" "}
+                <span dir="ltr" className="inline-block font-mono text-[11px]">
+                  *נטוי*
+                </span>{" "}
+                לנטוי,{" "}
+                <span dir="ltr" className="inline-block font-mono text-[11px]">
+                  ## כותרת
+                </span>{" "}
+                לכותרת,{" "}
+                <span dir="ltr" className="inline-block font-mono text-[11px]">
+                  - פריט
+                </span>{" "}
+                לרשימה.
               </div>
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="כתבו כאן את תוכן הכתבה..."
+                placeholder={
+                  "כתבו כאן את תוכן הכתבה...\n\nלחצו Enter פעמיים בשביל פסקה חדשה.\n\n**טיפ:** טקסט מוקף בכוכביות יוצא מודגש."
+                }
                 rows={14}
                 required
                 className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y min-h-[200px]"

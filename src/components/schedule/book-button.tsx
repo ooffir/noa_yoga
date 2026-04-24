@@ -17,6 +17,7 @@ interface BookButtonProps {
   classDate?: string | Date;
   classStartTime?: string;
   creditPrice?: number;
+  punchCard5Price?: number;
   punchCardPrice?: number;
   cancellationHoursBefore?: number;
 }
@@ -49,6 +50,7 @@ export function BookButton({
   classDate,
   classStartTime,
   creditPrice = 50,
+  punchCard5Price = 200,
   punchCardPrice = 350,
   cancellationHoursBefore = 6,
 }: BookButtonProps) {
@@ -162,6 +164,7 @@ export function BookButton({
         classInstanceId={classInstanceId}
         classTitle={classTitle}
         creditPrice={creditPrice}
+        punchCard5Price={punchCard5Price}
         punchCardPrice={punchCardPrice}
       />
 

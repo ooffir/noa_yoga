@@ -4,6 +4,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 
 export const revalidate = 60;
 
@@ -65,10 +67,18 @@ export default async function ArticlePage({ params }: Props) {
         </h1>
 
         {article.content && (
-          <div
-            className="prose-article mt-8 text-right text-[15px] leading-[2] text-sage-700"
-            dangerouslySetInnerHTML={{ __html: article.content }}
-          />
+          <div className="prose-article mt-8 text-right text-[15px] leading-[1.9] text-sage-700">
+            {/*
+             * Markdown is rendered safely (no raw HTML) using react-markdown.
+             * remark-breaks converts single newlines → <br/>, so the article
+             * preserves line breaks exactly as Noa types them in the admin
+             * textarea. Double newlines still produce full <p> paragraphs
+             * with the spacing defined in globals.css (.prose-article p).
+             */}
+            <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+              {article.content}
+            </ReactMarkdown>
+          </div>
         )}
 
         <div className="mt-16 rounded-[2rem] bg-gradient-to-bl from-sage-600 to-sage-700 p-8 text-center text-white sm:p-10">

@@ -88,11 +88,17 @@ export default async function SchedulePage({ searchParams }: Props) {
     }),
     prisma.siteSettings.findUnique({
       where: { id: "main" },
-      select: { creditPrice: true, punchCardPrice: true, cancellationWindow: true },
+      select: {
+        creditPrice: true,
+        punchCard5Price: true,
+        punchCardPrice: true,
+        cancellationWindow: true,
+      },
     }).catch(() => null),
   ]);
 
   const creditPrice = settings?.creditPrice ?? 50;
+  const punchCard5Price = settings?.punchCard5Price ?? 200;
   const punchCardPrice = settings?.punchCardPrice ?? 350;
   const cancellationHours = settings?.cancellationWindow ?? 6;
 
@@ -221,6 +227,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classDate={inst.date.toISOString()}
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
+                              punchCard5Price={punchCard5Price}
                               punchCardPrice={punchCardPrice}
                               cancellationHoursBefore={cancellationHours}
                             />
@@ -235,6 +242,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classDate={inst.date.toISOString()}
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
+                              punchCard5Price={punchCard5Price}
                               punchCardPrice={punchCardPrice}
                               cancellationHoursBefore={cancellationHours}
                             />
@@ -247,6 +255,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                               classDate={inst.date.toISOString()}
                               classStartTime={inst.startTime}
                               creditPrice={creditPrice}
+                              punchCard5Price={punchCard5Price}
                               punchCardPrice={punchCardPrice}
                               cancellationHoursBefore={cancellationHours}
                             />

@@ -27,7 +27,17 @@
 
 @layer components {
   .prose-article p {
+    margin-bottom: 1.1rem;
+  }
+  .prose-article p:last-child {
+    margin-bottom: 0;
+  }
+  .prose-article h1 {
+    font-size: 1.625rem;
+    font-weight: 700;
+    margin-top: 2rem;
     margin-bottom: 1rem;
+    color: var(--tw-prose-headings, #28352a);
   }
   .prose-article h2 {
     font-size: 1.375rem;
