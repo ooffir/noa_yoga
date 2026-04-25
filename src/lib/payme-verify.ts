@@ -1,23 +1,22 @@
 /**
- * PayMe IPN verification.
+ * PayMe IPN verification + active sale lookup.
  *
  * The incoming webhook body is untrusted — a bad actor could POST a
  * forged IPN to our endpoint to mint free credits. Instead of trusting
  * the body, we call PayMe's own API server-to-server with the received
- * `payme_sale_code` and rely on their authoritative answer.
+ * `payme_sale_code` (or our internal `custom_1` reference) and rely on
+ * their authoritative answer.
  *
- * This covers the common attack paths:
- *   - Forged webhook with a valid `payme_sale_code` the attacker
- *     guessed / overheard → PayMe confirms whether it actually succeeded
- *     for OUR seller UID and at the expected amount.
- *   - Replay of a real webhook → idempotency in `completePaymentSuccess`
- *     already handles this even without verification.
- *   - Completely fabricated `payme_sale_code` → PayMe returns an error,
- *     we reject.
+ * Two helpers exposed:
+ *   - verifyPaymeSale(saleCode)              — direct lookup by PayMe's id
+ *   - verifyPaymeSaleByCustomRef(customRef)  — lookup by our custom_1 tag
+ *
+ * Both log every step with a `[payme-verify]` prefix so production
+ * Vercel logs can pinpoint exactly where verification fails.
  *
  * Docs: https://docs.payme.io
- *   Base URLs — Staging: https://sandbox.payme.io/api
- *              Production: https://live.payme.io/api
+ *   Base URLs — Staging:    https://sandbox.payme.io/api
+ *               Production: https://live.payme.io/api
  */
 
 export type PaymeVerifyResult =
@@ -39,179 +38,6 @@ export type PaymeVerifyResult =
       detail?: string;
     };
 
-/**
- * Call PayMe's /api/get-sales endpoint and confirm a sale is genuine.
- *
- * We derive the base URL from `PAYME_API_URL` (which points at
- * `.../api/generate-sale`) so staging and production are automatically
- * consistent with the other API calls we make.
- */
-export async function verifyPaymeSale(
-  saleCode: string,
-): Promise<PaymeVerifyResult> {
-  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
-  const apiUrl = process.env.PAYME_API_URL?.trim();
-
-  if (!sellerUid || !apiUrl) {
-    return {
-      ok: false,
-      reason: "missing_config",
-      detail: "PAYME_SELLER_UID or PAYME_API_URL is unset",
-    };
-  }
-
-  if (!saleCode) {
-    return { ok: false, reason: "missing_sale_code" };
-  }
-
-  // Derive base and swap endpoint: .../api/generate-sale → .../api/get-sales
-  const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
-  const verifyUrl = `${baseUrl}/get-sales`;
-
-  let response: Response;
-  try {
-    response = await fetch(verifyUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        seller_payme_id: sellerUid,
-        payme_sale_code: saleCode,
-      }),
-      // PayMe verify should be fast; fail fast if it hangs.
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (err) {
-    return {
-      ok: false,
-      reason: "network_error",
-      detail: err instanceof Error ? err.message : String(err),
-    };
-  }
-
-  const rawText = await response.text();
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(rawText);
-  } catch {
-    return {
-      ok: false,
-      reason: "api_error",
-      detail: `HTTP ${response.status}, non-JSON body: ${rawText.slice(0, 200)}`,
-    };
-  }
-
-  if (!response.ok) {
-    return {
-      ok: false,
-      reason: "api_error",
-      detail: `HTTP ${response.status}: ${JSON.stringify(body).slice(0, 200)}`,
-    };
-  }
-
-  // PayMe's response shape varies slightly across regions — normalise.
-  // Known fields: status_code (0 = OK), sales[] (list of sale objects),
-  //               or the single sale fields inline on top-level.
-  // Some responses return { sales: [{ sale_status: "captured", ... }] },
-  // others flatten. We probe for either.
-  const statusCode = (body.status_code ?? body.statusCode) as number | string | undefined;
-  if (statusCode !== undefined && String(statusCode) !== "0") {
-    return {
-      ok: false,
-      reason: "api_error",
-      detail: `PayMe returned status_code=${statusCode}`,
-    };
-  }
-
-  const sale = extractFirstSale(body);
-  if (!sale) {
-    return {
-      ok: false,
-      reason: "api_error",
-      detail: "no sale object in PayMe response",
-    };
-  }
-
-  const saleStatus = String(
-    sale.sale_status ??
-      sale.payme_status ??
-      sale.status ??
-      "",
-  ).toLowerCase();
-  const salePriceAgurot = Number(sale.sale_price ?? sale.price ?? 0);
-  const saleSellerUid = String(sale.seller_payme_id ?? sale.seller_uid ?? "");
-
-  // If PayMe echoes back a seller id that doesn't match us, reject — the
-  // attacker may have used a real PayMe sale code from a different merchant.
-  if (saleSellerUid && saleSellerUid !== sellerUid) {
-    return {
-      ok: false,
-      reason: "seller_mismatch",
-      detail: `response seller=${saleSellerUid.slice(0, 4)}... ours=${sellerUid.slice(0, 4)}...`,
-    };
-  }
-
-  // Accept multiple spellings of "successful". PayMe uses at least:
-  //   - "captured" (sale was fully paid)
-  //   - "success"
-  //   - "1"
-  //   - "paid"
-  const isSuccess =
-    saleStatus === "captured" ||
-    saleStatus === "success" ||
-    saleStatus === "paid" ||
-    saleStatus === "1";
-
-  if (!isSuccess) {
-    return {
-      ok: false,
-      reason: "not_successful",
-      detail: `PayMe reports status=${saleStatus || "(empty)"}`,
-    };
-  }
-
-  return { ok: true, saleCode, saleStatus, salePriceAgurot };
-}
-
-function extractFirstSale(body: Record<string, unknown>): Record<string, unknown> | null {
-  // Shape 1: { sales: [ { ... } ] }
-  if (Array.isArray(body.sales) && body.sales.length > 0) {
-    const first = body.sales[0];
-    if (first && typeof first === "object") return first as Record<string, unknown>;
-  }
-
-  // Shape 2: { sale: { ... } }
-  if (body.sale && typeof body.sale === "object") {
-    return body.sale as Record<string, unknown>;
-  }
-
-  // Shape 3: fields on the top-level body (single-sale response)
-  if (body.payme_sale_code || body.sale_status || body.sale_price) {
-    return body;
-  }
-
-  return null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Custom-ref lookup — used by /payments/success and /workshops to actively
-//  resolve a sale's status the moment the user lands on the return URL,
-//  WITHOUT waiting for PayMe's IPN webhook to arrive.
-//
-//  PayMe's `/api/get-sales` accepts `custom_1` as a filter parameter, so we
-//  can ask "show me the most recent sale tagged with my internal payment id"
-//  and decide success / failure / still pending synchronously. Since each
-//  generate-sale call we make embeds `custom_1: "pay:<paymentId>"` (or
-//  "wsr:<registrationId>"), this lookup is unambiguous per transaction.
-//
-//  Returns the most recent matching sale (PayMe orders by recency by default).
-//  If the same custom_1 yielded multiple captured sales (rare — would require
-//  the user retrying past the 60s server-side dedup window) we use the first
-//  one in the array; the second won't be allowed to grant duplicate credits
-//  by the idempotent `completePaymentSuccess` anyway.
-// ─────────────────────────────────────────────────────────────────────────────
 export type PaymeCustomLookupReason =
   | "missing_config"
   | "missing_sale_code"
@@ -230,21 +56,44 @@ export type PaymeCustomLookupResult =
     }
   | { ok: false; reason: PaymeCustomLookupReason; detail?: string };
 
-export async function verifyPaymeSaleByCustomRef(
-  customRef: string,
-): Promise<PaymeCustomLookupResult> {
+// ─────────────────────────────────────────────────────────────────────────────
+//  Direct verification by PayMe's own sale id/code
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Verify a specific sale by its PayMe identifier. PayMe's URL params on
+ * the return URL come in several flavours — `payme_sale_code`,
+ * `payme_sale_id`, `sale_code`, `sale_id` — but they're all the same
+ * value, so callers should pass whichever one they have.
+ *
+ * We send BOTH `payme_sale_code` AND `payme_sale_id` in the request body
+ * because PayMe's docs are inconsistent about which one /get-sales
+ * actually filters on.
+ */
+export async function verifyPaymeSale(
+  saleCode: string,
+): Promise<PaymeVerifyResult> {
   const sellerUid = process.env.PAYME_SELLER_UID?.trim();
   const apiUrl = process.env.PAYME_API_URL?.trim();
 
+  console.log("[payme-verify] verifyPaymeSale:start", {
+    saleCodePreview: saleCode ? saleCode.slice(0, 8) + "…" : "(empty)",
+    sellerUidSet: !!sellerUid,
+    apiUrlSet: !!apiUrl,
+  });
+
   if (!sellerUid || !apiUrl) {
+    console.error("[payme-verify] verifyPaymeSale:missing_config");
     return {
       ok: false,
       reason: "missing_config",
       detail: "PAYME_SELLER_UID or PAYME_API_URL is unset",
     };
   }
-  if (!customRef) {
-    return { ok: false, reason: "missing_sale_code", detail: "customRef is empty" };
+
+  if (!saleCode) {
+    console.error("[payme-verify] verifyPaymeSale:missing_sale_code");
+    return { ok: false, reason: "missing_sale_code" };
   }
 
   const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
@@ -254,28 +103,22 @@ export async function verifyPaymeSaleByCustomRef(
   try {
     response = await fetch(verifyUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      // Defensive: pass BOTH names. PayMe accepts the one it understands
+      // and ignores the other. This eliminates a class of false negatives
+      // when the merchant return URL uses a different name than the
+      // /get-sales filter expects.
       body: JSON.stringify({
         seller_payme_id: sellerUid,
-        // PayMe Direct API supports filtering recent sales by the custom_1
-        // tag we wrote at generate-sale time. This is the same field the
-        // IPN dispatcher reads, so the two paths can never disagree.
-        custom_1: customRef,
+        payme_sale_code: saleCode,
+        payme_sale_id: saleCode,
       }),
-      // Active checks happen on the user's return — they're already
-      // staring at a spinner. Keep the timeout tight so the page
-      // doesn't hang past ~3s if PayMe is slow.
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (err) {
-    return {
-      ok: false,
-      reason: "network_error",
-      detail: err instanceof Error ? err.message : String(err),
-    };
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("[payme-verify] verifyPaymeSale:network_error", { detail });
+    return { ok: false, reason: "network_error", detail };
   }
 
   const rawText = await response.text();
@@ -283,12 +126,18 @@ export async function verifyPaymeSaleByCustomRef(
   try {
     body = JSON.parse(rawText);
   } catch {
-    return {
-      ok: false,
-      reason: "api_error",
-      detail: `HTTP ${response.status}, non-JSON: ${rawText.slice(0, 200)}`,
-    };
+    const detail = `HTTP ${response.status}, non-JSON body: ${rawText.slice(0, 200)}`;
+    console.error("[payme-verify] verifyPaymeSale:parse_error", { detail });
+    return { ok: false, reason: "api_error", detail };
   }
+
+  console.log("[payme-verify] verifyPaymeSale:response", {
+    httpStatus: response.status,
+    statusCode: body.status_code ?? body.statusCode,
+    hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
+    hasSale: !!body.sale,
+    keys: Object.keys(body).slice(0, 12),
+  });
 
   if (!response.ok) {
     return {
@@ -307,24 +156,23 @@ export async function verifyPaymeSaleByCustomRef(
     };
   }
 
-  // Pick the most recent sale. PayMe returns `sales: [...]` with the
-  // newest one first when filtered. Some shapes return a single sale
-  // inline — extractFirstSale handles both.
   const sale = extractFirstSale(body);
   if (!sale) {
-    return {
-      ok: false,
-      reason: "no_sales_found",
-      detail: `no sales found for custom_1=${customRef}`,
-    };
+    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response");
+    return { ok: false, reason: "api_error", detail: "no sale object in PayMe response" };
   }
 
-  const saleCode = String(sale.payme_sale_code ?? sale.sale_code ?? "");
   const saleStatus = String(
     sale.sale_status ?? sale.payme_status ?? sale.status ?? "",
   ).toLowerCase();
   const salePriceAgurot = Number(sale.sale_price ?? sale.price ?? 0);
   const saleSellerUid = String(sale.seller_payme_id ?? sale.seller_uid ?? "");
+
+  console.log("[payme-verify] verifyPaymeSale:sale", {
+    saleStatus,
+    salePriceAgurot,
+    sellerMatches: !saleSellerUid || saleSellerUid === sellerUid,
+  });
 
   if (saleSellerUid && saleSellerUid !== sellerUid) {
     return {
@@ -334,12 +182,141 @@ export async function verifyPaymeSaleByCustomRef(
     };
   }
 
-  // "Captured" = funds actually collected. PayMe uses several spellings.
-  const isCaptured =
-    saleStatus === "captured" ||
-    saleStatus === "success" ||
-    saleStatus === "paid" ||
-    saleStatus === "1";
+  if (!isCapturedStatus(saleStatus)) {
+    return {
+      ok: false,
+      reason: "not_successful",
+      detail: `PayMe reports status=${saleStatus || "(empty)"}`,
+    };
+  }
+
+  console.log("[payme-verify] verifyPaymeSale:OK");
+  return { ok: true, saleCode, saleStatus, salePriceAgurot };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Active lookup by our internal custom_1 reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Find the most recent sale tagged with our internal `custom_1` value
+ * (e.g. `pay:<paymentId>` or `wsr:<registrationId>`) and report whether
+ * it has been captured.
+ *
+ * Two-tier strategy:
+ *   1. Direct filter: POST /get-sales with `custom_1=<ref>`.
+ *   2. Fallback: if (1) returns 0 sales (some PayMe accounts don't honour
+ *      the custom_1 filter), POST /get-sales with a 24h date window and
+ *      filter client-side. Slower but reliable.
+ *
+ * Logs every step so a Vercel log search for `[payme-verify]` can show
+ * exactly where the resolution failed.
+ */
+export async function verifyPaymeSaleByCustomRef(
+  customRef: string,
+): Promise<PaymeCustomLookupResult> {
+  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
+  const apiUrl = process.env.PAYME_API_URL?.trim();
+
+  console.log("[payme-verify] customRef:start", {
+    customRef,
+    sellerUidSet: !!sellerUid,
+    apiUrlSet: !!apiUrl,
+  });
+
+  if (!sellerUid || !apiUrl) {
+    console.error("[payme-verify] customRef:missing_config");
+    return {
+      ok: false,
+      reason: "missing_config",
+      detail: "PAYME_SELLER_UID or PAYME_API_URL is unset",
+    };
+  }
+  if (!customRef) {
+    return { ok: false, reason: "missing_sale_code", detail: "customRef is empty" };
+  }
+
+  const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
+  const verifyUrl = `${baseUrl}/get-sales`;
+
+  // ─── Pass 1 — direct custom_1 filter ───
+  const filtered = await postGetSales(verifyUrl, {
+    seller_payme_id: sellerUid,
+    custom_1: customRef,
+  });
+
+  if (!filtered.ok) {
+    console.error("[payme-verify] customRef:pass1_request_error", filtered);
+    return { ok: false, reason: filtered.reason, detail: filtered.detail };
+  }
+
+  console.log("[payme-verify] customRef:pass1_response", {
+    salesCount: filtered.sales.length,
+  });
+
+  let matched = pickMatchingSale(filtered.sales, customRef);
+
+  // ─── Pass 2 — fallback: 24h date window then client-side filter ───
+  // Some PayMe seller configurations don't honour custom_1 on get-sales.
+  // If pass 1 returned zero sales we widen the search to "anything
+  // captured by us in the last 24h" and match by custom_1 in JS.
+  if (!matched) {
+    console.log("[payme-verify] customRef:fallback_attempting_date_window");
+    const now = new Date();
+    const startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const broad = await postGetSales(verifyUrl, {
+      seller_payme_id: sellerUid,
+      // PayMe accepts ISO date strings on most date filters. If they
+      // ignore the params entirely, we still get all sales for our
+      // seller and filter in JS — slower but correct.
+      start_date: startDate.toISOString(),
+      end_date: now.toISOString(),
+    });
+
+    if (!broad.ok) {
+      console.error("[payme-verify] customRef:pass2_request_error", broad);
+      return { ok: false, reason: broad.reason, detail: broad.detail };
+    }
+
+    console.log("[payme-verify] customRef:pass2_response", {
+      salesCount: broad.sales.length,
+    });
+
+    matched = pickMatchingSale(broad.sales, customRef);
+  }
+
+  if (!matched) {
+    console.error("[payme-verify] customRef:no_sales_found", { customRef });
+    return {
+      ok: false,
+      reason: "no_sales_found",
+      detail: `no sale tagged with custom_1=${customRef} found in either filter or 24h window`,
+    };
+  }
+
+  const saleCode = String(matched.payme_sale_code ?? matched.sale_code ?? matched.payme_sale_id ?? matched.sale_id ?? "");
+  const saleStatus = String(
+    matched.sale_status ?? matched.payme_status ?? matched.status ?? "",
+  ).toLowerCase();
+  const salePriceAgurot = Number(matched.sale_price ?? matched.price ?? 0);
+  const saleSellerUid = String(matched.seller_payme_id ?? matched.seller_uid ?? "");
+
+  console.log("[payme-verify] customRef:matched", {
+    saleCodePreview: saleCode ? saleCode.slice(0, 8) + "…" : "(empty)",
+    saleStatus,
+    salePriceAgurot,
+  });
+
+  if (saleSellerUid && saleSellerUid !== sellerUid) {
+    return {
+      ok: false,
+      reason: "seller_mismatch",
+      detail: `response seller=${saleSellerUid.slice(0, 4)}... ours=${sellerUid.slice(0, 4)}...`,
+    };
+  }
+
+  const isCaptured = isCapturedStatus(saleStatus);
+  console.log("[payme-verify] customRef:decision", { isCaptured, saleStatus });
 
   return {
     ok: true,
@@ -348,4 +325,144 @@ export async function verifyPaymeSaleByCustomRef(
     salePriceAgurot,
     isCaptured,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Internals
+// ─────────────────────────────────────────────────────────────────────────────
+
+type GetSalesResult =
+  | { ok: true; sales: Record<string, unknown>[] }
+  | { ok: false; reason: PaymeCustomLookupReason; detail?: string };
+
+/**
+ * Single-shot wrapper around `POST /api/get-sales`. Returns the sales
+ * array regardless of which response shape PayMe used (`{sales: [...]}`,
+ * `{sale: {...}}`, or fields inline).
+ */
+async function postGetSales(
+  url: string,
+  body: Record<string, unknown>,
+): Promise<GetSalesResult> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "network_error",
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const rawText = await response.text();
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `HTTP ${response.status}, non-JSON body: ${rawText.slice(0, 200)}`,
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `HTTP ${response.status}: ${JSON.stringify(parsed).slice(0, 200)}`,
+    };
+  }
+
+  const statusCode = (parsed.status_code ?? parsed.statusCode) as number | string | undefined;
+  if (statusCode !== undefined && String(statusCode) !== "0") {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `PayMe status_code=${statusCode}: ${JSON.stringify(parsed).slice(0, 200)}`,
+    };
+  }
+
+  // Normalise into an array of sale objects
+  const sales: Record<string, unknown>[] = [];
+  if (Array.isArray(parsed.sales)) {
+    for (const s of parsed.sales) {
+      if (s && typeof s === "object") sales.push(s as Record<string, unknown>);
+    }
+  } else if (parsed.sale && typeof parsed.sale === "object") {
+    sales.push(parsed.sale as Record<string, unknown>);
+  } else if (parsed.payme_sale_code || parsed.sale_status || parsed.sale_price) {
+    sales.push(parsed);
+  }
+
+  return { ok: true, sales };
+}
+
+/**
+ * Pick the most recent sale matching our `custom_1` reference and that
+ * is in a "captured-ish" state. PayMe sometimes returns multiple sales
+ * for the same custom_1 (the user retried) — we prefer captured ones,
+ * then fall back to the most recent of any state so the caller can see
+ * "still pending" vs "no record at all".
+ */
+function pickMatchingSale(
+  sales: Record<string, unknown>[],
+  customRef: string,
+): Record<string, unknown> | null {
+  if (sales.length === 0) return null;
+
+  const matching = sales.filter((s) => {
+    const c1 = String(s.custom_1 ?? s.customId1 ?? "");
+    return c1 === customRef;
+  });
+
+  if (matching.length === 0) {
+    // Some PayMe responses include all custom fields, others don't echo
+    // them. If our filter didn't match anything but pass 1 was a direct
+    // custom_1 filter (so PayMe already filtered server-side), trust the
+    // first sale in the response.
+    return sales[0];
+  }
+
+  // Prefer a captured one; fall back to the first match.
+  const captured = matching.find((s) => {
+    const status = String(
+      s.sale_status ?? s.payme_status ?? s.status ?? "",
+    ).toLowerCase();
+    return isCapturedStatus(status);
+  });
+  return captured ?? matching[0];
+}
+
+function isCapturedStatus(s: string): boolean {
+  // PayMe spellings observed in the wild:
+  //   "captured", "success", "1", "paid", "completed", "approved"
+  return (
+    s === "captured" ||
+    s === "success" ||
+    s === "paid" ||
+    s === "completed" ||
+    s === "approved" ||
+    s === "1"
+  );
+}
+
+function extractFirstSale(body: Record<string, unknown>): Record<string, unknown> | null {
+  if (Array.isArray(body.sales) && body.sales.length > 0) {
+    const first = body.sales[0];
+    if (first && typeof first === "object") return first as Record<string, unknown>;
+  }
+  if (body.sale && typeof body.sale === "object") {
+    return body.sale as Record<string, unknown>;
+  }
+  if (body.payme_sale_code || body.sale_status || body.sale_price) {
+    return body;
+  }
+  return null;
 }

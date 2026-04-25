@@ -7,18 +7,17 @@ import { verifyPaymeSaleByCustomRef } from "@/lib/payme-verify";
 /**
  * POST /api/payments/resolve
  *
- * Body: { paymentId: string }
+ * Active synchronous-resolution endpoint used by <PendingResolver> on
+ * /payments/success when the IPN webhook hasn't landed yet. Calls
+ * PayMe's `/api/get-sales` filtered by `custom_1=pay:<paymentId>` to
+ * determine the live status, then idempotently completes our DB row
+ * if PayMe reports the sale as captured.
  *
- * Active synchronous-resolution endpoint used by the success page when
- * the IPN webhook hasn't landed yet. Calls PayMe's /api/get-sales
- * filtered by `custom_1=pay:<paymentId>` to determine the live status
- * and idempotently completes our DB row if the sale was captured.
+ * Logs every step with `[payments/resolve]` prefix so a Vercel log
+ * search reveals exactly where resolution stopped.
  *
  * Authorization: must be the same user who owns the Payment row, OR an
  * ADMIN. We don't want users probing each other's payment statuses.
- *
- * Returns: { status, credits, completed } — the latest known DB status
- * after the active check + any completion attempt.
  */
 
 export const dynamic = "force-dynamic";
@@ -41,25 +40,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "paymentId required" }, { status: 400 });
   }
 
-  // Ownership check — block cross-user lookups.
+  console.log("[payments/resolve] start", { paymentId, userId: user.id });
+
+  // Ownership check
   const payment = await db.payment.findUnique({
     where: { id: paymentId },
     select: { userId: true, status: true, type: true },
   });
   if (!payment) {
+    console.error("[payments/resolve] not_found", { paymentId });
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   if (payment.userId !== user.id && user.role !== "ADMIN") {
+    console.error("[payments/resolve] forbidden", { paymentId, userId: user.id });
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  // Already completed? Short-circuit — no need to call PayMe.
+  console.log("[payments/resolve] db_status", { status: payment.status });
+
+  // Already completed → short-circuit, no PayMe call needed.
   if (payment.status === "COMPLETED") {
     const punchCard = await db.punchCard.findFirst({ where: { paymentId } });
     return NextResponse.json({
       status: "COMPLETED",
       credits: punchCard?.totalCredits ?? 0,
-      completed: false, // not by THIS request — already was
+      completed: false, // wasn't completed by THIS request
     });
   }
 
@@ -73,9 +78,14 @@ export async function POST(req: Request) {
 
   // PENDING — actively ask PayMe.
   const lookup = await verifyPaymeSaleByCustomRef(`pay:${paymentId}`);
+  console.log("[payments/resolve] payme_lookup", lookup);
 
   if (lookup.ok && lookup.isCaptured) {
+    // PayMe says captured → safety refresh: complete the DB record now.
+    // completePaymentSuccess is idempotent so a future webhook is harmless.
     const result = await completePaymentSuccess(paymentId, lookup.saleCode);
+    console.log("[payments/resolve] complete_result", result);
+
     return NextResponse.json({
       status: "COMPLETED",
       credits: "credits" in result ? result.credits : 0,
@@ -84,13 +94,15 @@ export async function POST(req: Request) {
   }
 
   // Lookup failed or sale not yet captured.
+  console.log("[payments/resolve] still_pending", {
+    lookupOk: lookup.ok,
+    reason: !lookup.ok ? lookup.reason : "not_captured",
+  });
+
   return NextResponse.json({
     status: "PENDING",
     credits: 0,
     completed: false,
-    reason:
-      lookup.ok === false
-        ? lookup.reason
-        : "sale_not_captured_yet",
+    reason: lookup.ok === false ? lookup.reason : "sale_not_captured_yet",
   });
 }

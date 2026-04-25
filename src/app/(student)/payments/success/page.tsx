@@ -45,71 +45,103 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
 
   if (paymentId) {
     try {
-      // ─── Phase 1 — URL-based self-heal (legacy path, kept as first-try) ───
-      // If PayMe redirected with a sale code in the URL, verify that
-      // specific sale directly. Cheaper than the custom-ref lookup
-      // because we don't need a list scan.
-      const urlSaleCode = sp.payme_sale_code || sp.sale_code || null;
-      if (
-        isPaymeSuccess({
-          payme_status: sp.payme_status,
-          status: sp.status,
-          status_code: sp.status_code,
-        }) &&
-        urlSaleCode
-      ) {
+      // Log every URL parameter PayMe sent us — useful for debugging
+      // what a specific PayMe seller account actually returns. The full
+      // dump is safe because none of these contain card numbers.
+      console.log("[payments/success] entry", {
+        paymentId,
+        urlParams: Object.fromEntries(
+          Object.entries(sp).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 60) : v]),
+        ),
+      });
+
+      // ─── Phase 1 — URL-based direct verification ───
+      // PayMe sends the sale identifier under any of these names depending
+      // on the seller's account configuration. We try them in priority
+      // order and verify directly with whichever one shows up.
+      //
+      // Critically: we DO NOT gate this on `payme_status` / `status` query
+      // params. Some PayMe configurations don't add the status param to
+      // the return URL but DO add the sale id — and the source of truth
+      // is `/api/get-sales` anyway. If we have any sale id, we ask PayMe.
+      const urlSaleCode =
+        sp.payme_sale_code ||
+        sp.payme_sale_id ||
+        sp.sale_code ||
+        sp.sale_id ||
+        null;
+
+      console.log("[payments/success] url_sale_code", { urlSaleCode });
+
+      if (urlSaleCode) {
         const verification = await verifyPaymeSale(urlSaleCode);
+        console.log("[payments/success] phase1_verify", verification);
+
         if (verification.ok) {
-          await completePaymentSuccess(paymentId, urlSaleCode);
-        } else {
-          console.error(
-            "[payments/success] URL success claim failed verification:",
-            verification,
-          );
+          // Verified captured by PayMe — complete idempotently.
+          const completeResult = await completePaymentSuccess(paymentId, urlSaleCode);
+          console.log("[payments/success] phase1_complete_result", completeResult);
+        } else if (
+          verification.reason === "not_successful" &&
+          isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
+        ) {
+          // PayMe says not captured AND the URL claims failure → mark FAILED.
+          await failPayment(paymentId);
+          console.log("[payments/success] phase1_marked_failed");
         }
+        // Other verification failures (api_error, seller_mismatch,
+        // network_error, missing_config) just fall through to phase 2.
       } else if (
         isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
       ) {
         await failPayment(paymentId);
+        console.log("[payments/success] failure_url_no_sale_code");
       }
 
       // ─── Phase 2 — ACTIVE custom-ref lookup ───
       // If we still don't see COMPLETED in the DB (either the URL didn't
-      // include a sale code OR the webhook hasn't landed yet), actively
-      // ask PayMe via /api/get-sales filtered by custom_1=pay:<paymentId>.
-      // This is the synchronous verification the user requested — it
-      // resolves the page without depending on the IPN at all.
+      // include a sale id OR the webhook hasn't landed yet), actively ask
+      // PayMe via /api/get-sales filtered by custom_1=pay:<paymentId>,
+      // with a 24h date-window fallback inside the helper.
       let dbPayment = await db.payment.findUnique({
         where: { id: paymentId },
         select: { status: true, type: true },
       });
 
+      console.log("[payments/success] db_status_after_phase1", {
+        status: dbPayment?.status,
+      });
+
       if (dbPayment && dbPayment.status === "PENDING") {
         const activeLookup = await verifyPaymeSaleByCustomRef(`pay:${paymentId}`);
+        console.log("[payments/success] phase2_lookup", activeLookup);
+
         if (activeLookup.ok && activeLookup.isCaptured) {
-          // Found a captured sale — complete idempotently. The webhook
-          // landing later is harmless; completePaymentSuccess returns
-          // `already_completed` on the second call.
-          await completePaymentSuccess(paymentId, activeLookup.saleCode);
-          // Re-read after the active resolution.
+          // Safety refresh: PayMe says captured but our DB still PENDING
+          // (webhook race / not delivered). Complete now — idempotent.
+          const completeResult = await completePaymentSuccess(
+            paymentId,
+            activeLookup.saleCode,
+          );
+          console.log("[payments/success] phase2_complete_result", completeResult);
+
           dbPayment = await db.payment.findUnique({
             where: { id: paymentId },
             select: { status: true, type: true },
+          });
+          console.log("[payments/success] db_status_after_phase2", {
+            status: dbPayment?.status,
           });
         } else if (
           activeLookup.ok === false &&
           activeLookup.reason !== "no_sales_found" &&
           activeLookup.reason !== "network_error"
         ) {
-          // Hard-rejected lookup (api_error, seller_mismatch, missing_config)
-          // is worth surfacing in logs — the operator might have a misconfig.
           console.error(
-            "[payments/success] custom-ref lookup rejected:",
+            "[payments/success] phase2_hard_failure:",
             activeLookup,
           );
         }
-        // network_error / no_sales_found just fall through; the resolver
-        // component below handles the residual "still pending" cases.
       }
 
       if (dbPayment) {
@@ -118,6 +150,8 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
         productLabel = productLabelFor(dbPayment.type);
         creditsGranted = creditsForPaymentType(dbPayment.type);
       }
+
+      console.log("[payments/success] final_status", { status });
 
       // ─── Auto-book the class the user came from (if applicable) ───
       // Only after the payment is confirmed COMPLETED. Engine deducts the

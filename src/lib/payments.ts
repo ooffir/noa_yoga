@@ -37,17 +37,26 @@ export async function completePaymentSuccess(
   paymentId: string,
   paymeSaleCode?: string | null,
 ): Promise<CompletePaymentResult> {
+  console.log("[payments] complete:start", {
+    paymentId,
+    saleCodePreview: paymeSaleCode ? paymeSaleCode.slice(0, 8) + "…" : null,
+  });
+
   const payment = await db.payment.findUnique({
     where: { id: paymentId },
     include: { user: { select: { email: true, name: true } } },
   });
   if (!payment) {
-    console.error("[payments] completePaymentSuccess: payment not found:", paymentId);
+    console.error("[payments] complete:not_found", { paymentId });
     return { kind: "not_found" };
   }
 
   if (payment.status === "COMPLETED") {
     const punchCard = await db.punchCard.findFirst({ where: { paymentId } });
+    console.log("[payments] complete:already_completed", {
+      paymentId,
+      credits: punchCard?.totalCredits ?? 0,
+    });
     return {
       kind: "already_completed",
       paymentId,
@@ -55,12 +64,22 @@ export async function completePaymentSuccess(
     };
   }
 
-  if (payment.status === "REFUNDED") return { kind: "refunded" };
+  if (payment.status === "REFUNDED") {
+    console.log("[payments] complete:already_refunded", { paymentId });
+    return { kind: "refunded" };
+  }
 
   // Credits derived from the shared product catalog — single source of
   // truth. Adding a new product (e.g. PUNCH_CARD_20) only requires an
   // entry in src/lib/product-catalog.ts; this line needs no change.
   const credits = creditsForPaymentType(payment.type);
+
+  console.log("[payments] complete:transacting", {
+    paymentId,
+    type: payment.type,
+    credits,
+    userId: payment.userId,
+  });
 
   // Atomic: Payment → COMPLETED + PunchCard created.
   await db.$transaction([
@@ -80,6 +99,8 @@ export async function completePaymentSuccess(
       },
     }),
   ]);
+
+  console.log("[payments] complete:OK", { paymentId, credits });
 
   // Revalidate surfaces that show credit balance.
   // NOTE: do NOT revalidate /payments/success — that page already has
