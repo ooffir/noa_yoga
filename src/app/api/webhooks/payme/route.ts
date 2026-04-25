@@ -115,23 +115,48 @@ export async function POST(req: Request) {
   // Both strategies require an EXACT amount match against a single
   // PENDING payment in the last 10 min — refuse to guess on ambiguity.
   if (!resolved) {
-    console.error("[payme-webhook] unrecognized custom_1:", {
+    // TEMP DEBUG: dump the ENTIRE IPN payload so we can see exactly
+    // which fields PayMe is sending for this seller account. The
+    // payload doesn't contain card numbers (PayMe never sends those
+    // through IPN); it just has sale code, status, amount, and
+    // possibly buyer name/email. Safe to log in full while we
+    // diagnose the field-name mismatch. Trim back once payments
+    // are stable.
+    console.error("[payme-webhook] unrecognized custom_1 — FULL PAYLOAD DUMP:", {
       custom1,
-      payloadKeys: Object.keys(payload).slice(0, 16),
-      // Log the full payload (truncated) so we can see exactly what
-      // PayMe sent. Sale codes / amounts aren't sensitive.
-      payloadPreview: JSON.stringify(payload).slice(0, 600),
+      payloadKeys: Object.keys(payload),
+      fullPayload: payload,
     });
 
-    if (claimedSuccess) {
+    // ── EMERGENCY TRUST mode ──
+    //
+    // Enter the trust path UNLESS the IPN explicitly claims failure or
+    // refund. We deliberately do NOT require a positive `claimedSuccess`
+    // here — many PayMe seller accounts send IPNs without any status
+    // field at all (a known quirk of older HPP integrations). If the
+    // webhook came in, has a price, and matches a unique PENDING
+    // payment, that's the most reliable signal we have.
+    //
+    // Security rationale:
+    //   - The /api/webhooks/payme URL is the seller's secret (only
+    //     configured in PayMe's dashboard). An attacker without that
+    //     URL cannot send IPNs at all.
+    //   - The amount must match an EXISTING PENDING Payment row created
+    //     by an authenticated user during the last 10 minutes.
+    //   - The match must be UNIQUE (refuse on 2+ candidates) — so even
+    //     if an attacker somehow learned the URL, they couldn't pick
+    //     which user's payment to complete without also knowing the
+    //     exact amount within the recency window.
+    if (!claimedFailure && !claimedRefund) {
       // ── Strategy 1: trust the IPN's own price field ──
-      // Try every spelling PayMe has used for the captured amount. Most
-      // accounts include `sale_price` (in agurot, our own format).
+      // Try every spelling PayMe has used for the captured amount.
       const ipnPriceRaw =
         payload.sale_price ||
         payload.price ||
         payload.amount ||
-        payload.transaction_amount;
+        payload.transaction_amount ||
+        payload.payme_total_amount ||
+        payload.total_amount;
       const ipnPriceAgurot = ipnPriceRaw ? Number(ipnPriceRaw) : NaN;
 
       console.log("[payme-webhook] strategy_1_ipn_price", {

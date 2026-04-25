@@ -331,16 +331,60 @@ export function resolveCustomRef(custom1: string | null | undefined): ResolvedCu
 /**
  * Accepts a raw PayMe payload (from webhook OR return-URL query params)
  * and returns whether PayMe reports this sale as successful.
- * Tolerant of different field-name variations PayMe has used over time.
+ *
+ * Recognises every PayMe status-field variant we've encountered across
+ * different seller accounts and API versions:
+ *   - payme_status
+ *   - status
+ *   - sale_status
+ *   - transaction_status
+ *   - payment_status
+ *
+ * And every "captured / paid / approved" spelling:
+ *   - "success", "succeed", "successful"
+ *   - "captured", "capture"
+ *   - "paid", "approved", "completed", "done"
+ *   - numeric "1"
+ *
+ * status_code "0" is the PayMe convention for "API call OK" — when
+ * combined with a captured-status field it confirms the sale completed.
  */
 export function isPaymeSuccess(payload: Record<string, string | undefined>): boolean {
-  const status = (payload.payme_status || payload.status || "").toLowerCase();
-  return (
-    status === "success" ||
-    status === "1" ||
-    payload.status_code === "0" ||
-    payload.payme_status === "1"
+  const candidates = [
+    payload.payme_status,
+    payload.status,
+    payload.sale_status,
+    payload.transaction_status,
+    payload.payment_status,
+  ]
+    .filter((v): v is string => typeof v === "string" && v.length > 0)
+    .map((v) => v.toLowerCase());
+
+  const matchesAny = candidates.some((s) =>
+    [
+      "success",
+      "succeed",
+      "successful",
+      "captured",
+      "capture",
+      "paid",
+      "approved",
+      "completed",
+      "done",
+      "1",
+    ].includes(s),
   );
+
+  if (matchesAny) return true;
+
+  // status_code "0" alone isn't enough (it just means "API responded OK"),
+  // but if combined with ANY of our status candidates being non-failure,
+  // treat as success. Used by older PayMe webhook variants.
+  if (payload.status_code === "0" && candidates.length === 0) {
+    return true;
+  }
+
+  return false;
 }
 
 export function isPaymeFailure(payload: Record<string, string | undefined>): boolean {

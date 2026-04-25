@@ -505,11 +505,35 @@ type GetSalesResult =
  * Single-shot wrapper around `POST /api/get-sales`. Returns the sales
  * array regardless of which response shape PayMe used (`{sales: [...]}`,
  * `{sale: {...}}`, or fields inline).
+ *
+ * TEMP DEBUG: this helper logs the FULL outbound URL + body, the seller
+ * UID prefix (first 4 chars, since the full UID is in env vars and
+ * shouldn't be cluttering production logs), and the FULL raw response
+ * body. This is what's letting us diagnose why /get-sales returns
+ * empty results for the user's seller account. Trim back once payments
+ * are stable.
  */
 async function postGetSales(
   url: string,
   body: Record<string, unknown>,
 ): Promise<GetSalesResult> {
+  // Log what we're about to send (every call, every time, while we
+  // debug the upstream emptiness issue).
+  const sellerInBody = body.seller_payme_id ? String(body.seller_payme_id) : "";
+  const apiEnv = /sandbox\./i.test(url)
+    ? "SANDBOX"
+    : /live\./i.test(url)
+    ? "PRODUCTION"
+    : "UNKNOWN";
+
+  console.log("[payme-verify] postGetSales:request", {
+    apiEnv,
+    verifyUrl: url,
+    sellerUidPrefix: sellerInBody.slice(0, 4) + (sellerInBody.length > 4 ? "…" : ""),
+    sellerUidLen: sellerInBody.length,
+    body: JSON.stringify(body),
+  });
+
   let response: Response;
   try {
     response = await fetch(url, {

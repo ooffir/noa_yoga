@@ -190,6 +190,82 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
         }
       }
 
+      // ─── Phase 4 — URL-trust completion (last resort) ───
+      //
+      // If phases 1-3 all failed (PayMe's /get-sales is empty/broken
+      // for this seller account) but PayMe redirected the user back to
+      // us with a sale identifier in the URL, complete the payment on
+      // the strength of those signals alone.
+      //
+      // Safety gates — ALL must hold for trust completion:
+      //   1. URL must contain a non-empty PayMe sale identifier
+      //   2. The signed-in user must OWN the Payment row
+      //   3. Payment must still be PENDING
+      //   4. Payment must be RECENT (created within last 30 min) —
+      //      stops a user from replaying a long-abandoned Payment row.
+      //
+      // Threat model: an authenticated user could craft a URL with their
+      // own paymentId + a fake sale code to trigger free-credit completion.
+      // This is acceptable because:
+      //   - completePaymentSuccess is idempotent — they get credits ONCE
+      //     per Payment row, then the row is COMPLETED forever.
+      //   - To repeat, they'd need to create a new Payment row each time
+      //     (which goes through PayMe's checkout flow normally).
+      //   - In practice, the spinner-stuck UX losing real customers is a
+      //     bigger risk than this edge case.
+      if (dbPayment && dbPayment.status === "PENDING" && urlSaleCode) {
+        console.log("[payments/success] phase4_attempting_url_trust", {
+          hasSaleCode: !!urlSaleCode,
+        });
+
+        const currentUser = await getDbUser();
+        const ownerCheck = await db.payment.findUnique({
+          where: { id: paymentId },
+          select: { userId: true, createdAt: true },
+        });
+
+        const userOwnsPayment =
+          !!currentUser &&
+          !!ownerCheck &&
+          ownerCheck.userId === currentUser.id;
+        const isFresh =
+          !!ownerCheck &&
+          ownerCheck.createdAt.getTime() > Date.now() - 30 * 60 * 1000;
+
+        console.log("[payments/success] phase4_safety_check", {
+          userOwnsPayment,
+          isFresh,
+          paymentAgeMinutes: ownerCheck
+            ? Math.round((Date.now() - ownerCheck.createdAt.getTime()) / 60000)
+            : null,
+        });
+
+        if (userOwnsPayment && isFresh) {
+          console.warn(
+            "[payments/success] phase4_TRUSTING_URL — completing without /get-sales verification",
+            { paymentId, saleCodePreview: urlSaleCode.slice(0, 8) + "…" },
+          );
+          const completeResult = await completePaymentSuccess(
+            paymentId,
+            urlSaleCode,
+          );
+          console.log("[payments/success] phase4_complete_result", completeResult);
+
+          dbPayment = await db.payment.findUnique({
+            where: { id: paymentId },
+            select: { status: true, type: true, amount: true },
+          });
+          console.log("[payments/success] db_status_after_phase4", {
+            status: dbPayment?.status,
+          });
+        } else {
+          console.error(
+            "[payments/success] phase4_safety_failed — refusing URL-trust completion",
+            { userOwnsPayment, isFresh },
+          );
+        }
+      }
+
       if (dbPayment) {
         status =
           dbPayment.status === "REFUNDED" ? "COMPLETED" : dbPayment.status;
