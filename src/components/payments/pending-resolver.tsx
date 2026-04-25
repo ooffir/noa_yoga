@@ -5,26 +5,30 @@ import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/ui/loading";
 
 /**
- * Sleek auto-resolver for the /payments/success page when the server-side
- * verification chain (URL-based + custom-ref active lookup) didn't finish
- * resolving the payment to COMPLETED before render.
+ * Pure DB-status poller for the /payments/success page.
  *
- * Flow on mount:
- *   1. POST /api/payments/resolve { paymentId } — actively re-checks PayMe.
- *   2. If status comes back COMPLETED → router.refresh() so the server
- *      component re-renders with the green success card.
- *   3. If still PENDING → wait 1.5s and retry, up to 4 attempts total.
- *   4. After max attempts, the spinner stays visible and the message
- *      softens to "התקבלת קבלה למייל — הקרדיטים יעודכנו תוך דקה".
+ * Behavior:
+ *   1. Every 2 seconds, POST to /api/payments/resolve { paymentId }.
+ *   2. The endpoint returns whatever status our DB currently holds.
+ *   3. If COMPLETED → router.refresh() so the server component
+ *      re-renders with the green success card.
+ *   4. If FAILED → router.refresh() so the user sees the failure card.
+ *   5. If still PENDING → keep polling, with friendly progress dots.
  *
- * No manual "בדיקה ידנית" button. The user just sees a friendly spinner
- * for a couple of seconds and then the success card appears. If PayMe
- * truly takes more than ~10 seconds, we fall back to the "receipt is on
- * its way" message rather than asking the user to press anything.
+ * No PayMe API calls. The webhook at /api/webhooks/payme is the only
+ * thing that flips status to COMPLETED; this component just waits for
+ * that to happen.
+ *
+ * Patience: 15 attempts × 2 seconds = 30 seconds max wait before showing
+ * the "receipt is on its way" softening message. The poll keeps running
+ * silently in the background even after the visible message changes —
+ * the webhook can still arrive minutes later (PayMe's IPN retry policy
+ * is forgiving).
  */
 
-const MAX_ATTEMPTS = 4;
-const RETRY_INTERVAL_MS = 1500;
+const VISIBLE_ATTEMPTS = 15;          // ~30 seconds of progress dots
+const RETRY_INTERVAL_MS = 2000;
+const HARD_STOP_AFTER_MS = 10 * 60 * 1000; // give up polling after 10 min
 
 interface Props {
   paymentId: string;
@@ -33,12 +37,12 @@ interface Props {
 export function PendingResolver({ paymentId }: Props) {
   const router = useRouter();
   const [attempt, setAttempt] = useState(0);
-  const [exhausted, setExhausted] = useState(false);
+  const startedAtRef = useRef<number>(Date.now());
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Cancel-on-unmount guard so we don't router.refresh() after navigating away.
   useEffect(() => {
-    // Cancel-on-unmount guard so we don't router.refresh() after navigating away.
     return () => {
       cancelledRef.current = true;
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -48,7 +52,7 @@ export function PendingResolver({ paymentId }: Props) {
   useEffect(() => {
     let cancelled = false;
 
-    async function tryResolve() {
+    async function poll() {
       try {
         const res = await fetch("/api/payments/resolve", {
           method: "POST",
@@ -60,45 +64,42 @@ export function PendingResolver({ paymentId }: Props) {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.status === "COMPLETED") {
-            // Refresh the server component so the success card replaces this
-            // component on the next render.
-            router.refresh();
-            return;
-          }
-          if (data.status === "FAILED") {
+          if (data.status === "COMPLETED" || data.status === "FAILED") {
+            // DB has resolved → re-render the server component.
             router.refresh();
             return;
           }
         }
 
-        // Still pending — schedule another attempt unless we've exhausted.
-        if (attempt + 1 < MAX_ATTEMPTS) {
+        // Still PENDING → schedule the next poll, unless we've hit the
+        // hard stop. The component stays mounted and the spinner keeps
+        // turning even past VISIBLE_ATTEMPTS — only the message softens.
+        if (Date.now() - startedAtRef.current < HARD_STOP_AFTER_MS) {
           timerRef.current = setTimeout(() => {
             if (!cancelledRef.current) setAttempt((n) => n + 1);
           }, RETRY_INTERVAL_MS);
-        } else {
-          setExhausted(true);
         }
       } catch {
-        // Network blips → just try again next tick (counts toward attempts).
-        if (attempt + 1 < MAX_ATTEMPTS) {
+        // Network blips count as "still pending" — try again next tick.
+        if (Date.now() - startedAtRef.current < HARD_STOP_AFTER_MS) {
           timerRef.current = setTimeout(() => {
             if (!cancelledRef.current) setAttempt((n) => n + 1);
           }, RETRY_INTERVAL_MS);
-        } else {
-          setExhausted(true);
         }
       }
     }
 
-    tryResolve();
+    poll();
 
     return () => {
       cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [attempt, paymentId, router]);
+
+  // Past 30 seconds, soften the message. The poll continues silently —
+  // the user just sees friendlier copy because waiting longer is normal.
+  const isVisibleWindow = attempt < VISIBLE_ATTEMPTS;
 
   return (
     <div className="py-2">
@@ -110,29 +111,32 @@ export function PendingResolver({ paymentId }: Props) {
         מאמתים את התשלום…
       </h1>
 
-      {!exhausted ? (
+      {isVisibleWindow ? (
         <p className="text-sage-500 leading-relaxed text-sm max-w-xs mx-auto">
-          מאמתים נתונים מול חברת האשראי, רק כמה שניות והכל יהיה מוכן 🌿
+          רק כמה שניות והכל יהיה מוכן 🌿
         </p>
       ) : (
         <p className="text-sage-500 leading-relaxed text-sm max-w-xs mx-auto">
           האימות לוקח מעט יותר מהרגיל. <strong>קיבלת קבלה למייל</strong> —
-          הקרדיטים יוצגו בחשבון תוך דקה לכל היותר.
+          הקרדיטים יוצגו בחשבון תוך דקה.
         </p>
       )}
 
-      {/* Tiny progress dots — pure decoration, makes the wait feel intentional */}
-      <div className="mt-6 flex items-center justify-center gap-1.5">
-        {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
-          <span
-            key={i}
-            className={`h-1.5 w-1.5 rounded-full transition-colors ${
-              i <= attempt ? "bg-sage-500" : "bg-sage-100"
-            }`}
-            aria-hidden
-          />
-        ))}
-      </div>
+      {/* Progress dots — visible during the first ~30s, then hidden so
+          the layout doesn't keep growing as the wait extends. */}
+      {isVisibleWindow && (
+        <div className="mt-6 flex items-center justify-center gap-1.5">
+          {Array.from({ length: VISIBLE_ATTEMPTS }).map((_, i) => (
+            <span
+              key={i}
+              className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                i <= attempt ? "bg-sage-500" : "bg-sage-100"
+              }`}
+              aria-hidden
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

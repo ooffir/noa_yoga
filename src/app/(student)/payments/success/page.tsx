@@ -5,21 +5,11 @@ import { Check, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
 import { getDbUser } from "@/lib/get-db-user";
 import { BookingEngine } from "@/lib/booking-engine";
-import {
-  completePaymentSuccess,
-  failPayment,
-  isPaymeSuccess,
-  isPaymeFailure,
-} from "@/lib/payments";
+import { failPayment, isPaymeFailure } from "@/lib/payments";
 import {
   creditsForPaymentType,
   productLabelFor,
 } from "@/lib/product-catalog";
-import {
-  verifyPaymeSale,
-  verifyPaymeSaleByCustomRef,
-  findCapturedSaleMatchingAmount,
-} from "@/lib/payme-verify";
 import { PendingResolver } from "@/components/payments/pending-resolver";
 
 // Always read live state — no caching on this page.
@@ -30,6 +20,33 @@ interface Props {
   searchParams: Promise<Record<string, string | undefined>>;
 }
 
+/**
+ * Payment-success / pending / failed page.
+ *
+ * ──────────────────────────────────────────────────────────────────────
+ *  Architecture decision: DB is the single source of truth.
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * This page no longer calls PayMe's `/get-sales` API. The PayMe API has
+ * proven unreliable in production for our seller account (returns 200 OK
+ * with empty results even after captured payments), so trying to verify
+ * here produces a flood of false "still pending" states for legitimate
+ * paid customers.
+ *
+ * Instead:
+ *   - The IPN webhook at /api/webhooks/payme is the ONLY thing that
+ *     flips a Payment row from PENDING → COMPLETED. It uses an emergency
+ *     trust mode (IPN price + amount-match in DB) that doesn't depend
+ *     on /get-sales either.
+ *   - This page only READS the DB. If status === COMPLETED → green
+ *     check immediately. If still PENDING → poll the DB via the
+ *     <PendingResolver> client component until it flips.
+ *
+ * Cancellation/failure URL param is the only edge case we still write
+ * for — it sets payment.status = FAILED in our DB so we can show the
+ * red banner without making PayMe API calls. No financial data is
+ * trusted from URL params; only "this user hit the cancel/fail flow".
+ */
 export default async function PaymentSuccessPage({ searchParams }: Props) {
   const sp = await searchParams;
   const paymentId = sp.payment;
@@ -46,239 +63,50 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
 
   if (paymentId) {
     try {
-      // Log every URL parameter PayMe sent us — useful for debugging
-      // what a specific PayMe seller account actually returns. The full
-      // dump is safe because none of these contain card numbers.
       console.log("[payments/success] entry", {
         paymentId,
         urlParams: Object.fromEntries(
-          Object.entries(sp).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 60) : v]),
+          Object.entries(sp).map(([k, v]) => [
+            k,
+            typeof v === "string" ? v.slice(0, 60) : v,
+          ]),
         ),
       });
 
-      // ─── Phase 1 — URL-based direct verification ───
-      // PayMe sends the sale identifier under any of these names depending
-      // on the seller's account configuration. We try them in priority
-      // order and verify directly with whichever one shows up.
-      //
-      // Critically: we DO NOT gate this on `payme_status` / `status` query
-      // params. Some PayMe configurations don't add the status param to
-      // the return URL but DO add the sale id — and the source of truth
-      // is `/api/get-sales` anyway. If we have any sale id, we ask PayMe.
-      const urlSaleCode =
-        sp.payme_sale_code ||
-        sp.payme_sale_id ||
-        sp.sale_code ||
-        sp.sale_id ||
-        null;
-
-      console.log("[payments/success] url_sale_code", { urlSaleCode });
-
-      if (urlSaleCode) {
-        const verification = await verifyPaymeSale(urlSaleCode);
-        console.log("[payments/success] phase1_verify", verification);
-
-        if (verification.ok) {
-          // Verified captured by PayMe — complete idempotently.
-          const completeResult = await completePaymentSuccess(paymentId, urlSaleCode);
-          console.log("[payments/success] phase1_complete_result", completeResult);
-        } else if (
-          verification.reason === "not_successful" &&
-          isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
-        ) {
-          // PayMe says not captured AND the URL claims failure → mark FAILED.
-          await failPayment(paymentId);
-          console.log("[payments/success] phase1_marked_failed");
-        }
-        // Other verification failures (api_error, seller_mismatch,
-        // network_error, missing_config) just fall through to phase 2.
-      } else if (
+      // ─── URL-based failure mark (DB-only, no PayMe API call) ───
+      // If the user clicked "cancel" inside PayMe and was redirected back
+      // with a failure status param, mark the payment FAILED so the page
+      // doesn't sit on the pending spinner forever waiting for a webhook
+      // that will never arrive (PayMe doesn't IPN cancellations).
+      if (
         isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
       ) {
         await failPayment(paymentId);
-        console.log("[payments/success] failure_url_no_sale_code");
+        console.log("[payments/success] marked_failed_from_url");
       }
 
-      // ─── Phase 2 — ACTIVE custom-ref lookup ───
-      // If we still don't see COMPLETED in the DB (either the URL didn't
-      // include a sale id OR the webhook hasn't landed yet), actively ask
-      // PayMe via /api/get-sales filtered by custom_1=pay:<paymentId>,
-      // with a 24h date-window fallback inside the helper.
-      // Selects `amount` here too (used by the phase-3 fallback later)
-      // to avoid re-querying the DB. This object is reassigned after
-      // each phase so downstream code always sees the latest status.
-      let dbPayment = await db.payment.findUnique({
+      // ─── Read DB — single source of truth ───
+      const dbPayment = await db.payment.findUnique({
         where: { id: paymentId },
-        select: { status: true, type: true, amount: true },
+        select: { status: true, type: true },
       });
 
-      console.log("[payments/success] db_status_after_phase1", {
+      console.log("[payments/success] db_status", {
         status: dbPayment?.status,
       });
 
-      if (dbPayment && dbPayment.status === "PENDING") {
-        const activeLookup = await verifyPaymeSaleByCustomRef(`pay:${paymentId}`);
-        console.log("[payments/success] phase2_lookup", activeLookup);
-
-        if (activeLookup.ok && activeLookup.isCaptured) {
-          // Safety refresh: PayMe says captured but our DB still PENDING
-          // (webhook race / not delivered). Complete now — idempotent.
-          const completeResult = await completePaymentSuccess(
-            paymentId,
-            activeLookup.saleCode,
-          );
-          console.log("[payments/success] phase2_complete_result", completeResult);
-
-          dbPayment = await db.payment.findUnique({
-            where: { id: paymentId },
-            select: { status: true, type: true, amount: true },
-          });
-          console.log("[payments/success] db_status_after_phase2", {
-            status: dbPayment?.status,
-          });
-        } else if (
-          activeLookup.ok === false &&
-          activeLookup.reason !== "no_sales_found" &&
-          activeLookup.reason !== "network_error"
-        ) {
-          console.error(
-            "[payments/success] phase2_hard_failure:",
-            activeLookup,
-          );
-        }
-      }
-
-      // ─── Phase 3 — Amount + timestamp fallback ───
-      // PayMe sometimes strips `custom_1` from both the IPN body and the
-      // /get-sales response. Phase 2 returns "no_sales_found" in that
-      // case. As a final resort we ask PayMe "did you capture a sale of
-      // exactly THIS amount in the last 10 minutes?" — using the amount
-      // we recorded in our Payment row when the user first clicked pay.
-      //
-      // Safe because:
-      //   - We scope to the specific paymentId from the URL (so we know
-      //     exactly which row to complete)
-      //   - PayMe must independently confirm a captured sale of the
-      //     correct amount happened
-      //   - If two captured sales of the same amount exist within the
-      //     window, the helper refuses to guess (returns "ambiguous")
-      //     and we leave the payment PENDING for manual review.
-      if (dbPayment && dbPayment.status === "PENDING") {
-        console.log("[payments/success] phase3_attempting_amount_match", {
-          amountAgurot: dbPayment.amount,
-        });
-        const amountLookup = await findCapturedSaleMatchingAmount({
-          amountAgurot: dbPayment.amount,
-          withinMinutes: 10,
-        });
-        console.log("[payments/success] phase3_lookup", amountLookup);
-
-        if (amountLookup.ok) {
-          const completeResult = await completePaymentSuccess(
-            paymentId,
-            amountLookup.saleCode,
-          );
-          console.log("[payments/success] phase3_complete_result", completeResult);
-
-          dbPayment = await db.payment.findUnique({
-            where: { id: paymentId },
-            select: { status: true, type: true, amount: true },
-          });
-          console.log("[payments/success] db_status_after_phase3", {
-            status: dbPayment?.status,
-          });
-        }
-      }
-
-      // ─── Phase 4 — URL-trust completion (last resort) ───
-      //
-      // If phases 1-3 all failed (PayMe's /get-sales is empty/broken
-      // for this seller account) but PayMe redirected the user back to
-      // us with a sale identifier in the URL, complete the payment on
-      // the strength of those signals alone.
-      //
-      // Safety gates — ALL must hold for trust completion:
-      //   1. URL must contain a non-empty PayMe sale identifier
-      //   2. The signed-in user must OWN the Payment row
-      //   3. Payment must still be PENDING
-      //   4. Payment must be RECENT (created within last 30 min) —
-      //      stops a user from replaying a long-abandoned Payment row.
-      //
-      // Threat model: an authenticated user could craft a URL with their
-      // own paymentId + a fake sale code to trigger free-credit completion.
-      // This is acceptable because:
-      //   - completePaymentSuccess is idempotent — they get credits ONCE
-      //     per Payment row, then the row is COMPLETED forever.
-      //   - To repeat, they'd need to create a new Payment row each time
-      //     (which goes through PayMe's checkout flow normally).
-      //   - In practice, the spinner-stuck UX losing real customers is a
-      //     bigger risk than this edge case.
-      if (dbPayment && dbPayment.status === "PENDING" && urlSaleCode) {
-        console.log("[payments/success] phase4_attempting_url_trust", {
-          hasSaleCode: !!urlSaleCode,
-        });
-
-        const currentUser = await getDbUser();
-        const ownerCheck = await db.payment.findUnique({
-          where: { id: paymentId },
-          select: { userId: true, createdAt: true },
-        });
-
-        const userOwnsPayment =
-          !!currentUser &&
-          !!ownerCheck &&
-          ownerCheck.userId === currentUser.id;
-        const isFresh =
-          !!ownerCheck &&
-          ownerCheck.createdAt.getTime() > Date.now() - 30 * 60 * 1000;
-
-        console.log("[payments/success] phase4_safety_check", {
-          userOwnsPayment,
-          isFresh,
-          paymentAgeMinutes: ownerCheck
-            ? Math.round((Date.now() - ownerCheck.createdAt.getTime()) / 60000)
-            : null,
-        });
-
-        if (userOwnsPayment && isFresh) {
-          console.warn(
-            "[payments/success] phase4_TRUSTING_URL — completing without /get-sales verification",
-            { paymentId, saleCodePreview: urlSaleCode.slice(0, 8) + "…" },
-          );
-          const completeResult = await completePaymentSuccess(
-            paymentId,
-            urlSaleCode,
-          );
-          console.log("[payments/success] phase4_complete_result", completeResult);
-
-          dbPayment = await db.payment.findUnique({
-            where: { id: paymentId },
-            select: { status: true, type: true, amount: true },
-          });
-          console.log("[payments/success] db_status_after_phase4", {
-            status: dbPayment?.status,
-          });
-        } else {
-          console.error(
-            "[payments/success] phase4_safety_failed — refusing URL-trust completion",
-            { userOwnsPayment, isFresh },
-          );
-        }
-      }
-
       if (dbPayment) {
+        // REFUNDED is treated as COMPLETED for display — the credits
+        // were granted at some point; the refund will eventually freeze
+        // the punch card via the refund webhook but the receipt stays.
         status =
           dbPayment.status === "REFUNDED" ? "COMPLETED" : dbPayment.status;
         productLabel = productLabelFor(dbPayment.type);
         creditsGranted = creditsForPaymentType(dbPayment.type);
       }
 
-      console.log("[payments/success] final_status", { status });
-
       // ─── Auto-book the class the user came from (if applicable) ───
-      // Only after the payment is confirmed COMPLETED. Engine deducts the
-      // credit; we just granted one — net effect for SINGLE_CLASS is
-      // 0 remaining, perfect.
+      // Only after DB confirms COMPLETED.
       if (status === "COMPLETED" && bookClassInstanceId) {
         try {
           const user = await getDbUser();
@@ -300,6 +128,8 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
           }
         }
       }
+
+      console.log("[payments/success] final_status", { status });
     } catch (err) {
       console.error("[payments/success] resolve error:", err);
     }
@@ -341,10 +171,10 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
             </>
           )}
 
-          {/* PENDING after both URL self-heal AND custom-ref lookup —
-              very rare. Could be: PayMe latency > 8s, sandbox quirk, or
-              the user landed before PayMe even captured. The resolver
-              component runs a brief silent retry then escalates. */}
+          {/* PENDING → poll the DB until the webhook flips it to COMPLETED.
+              This page never calls PayMe's API directly; it only reads
+              our DB. The webhook (which has an emergency-trust mode of
+              its own) is the single writer that completes payments. */}
           {status === "PENDING" && paymentId && (
             <PendingResolver paymentId={paymentId} />
           )}

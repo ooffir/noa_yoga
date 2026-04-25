@@ -1,26 +1,27 @@
 import { NextResponse } from "next/server";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
-import { completePaymentSuccess } from "@/lib/payments";
-import {
-  verifyPaymeSaleByCustomRef,
-  findCapturedSaleMatchingAmount,
-} from "@/lib/payme-verify";
 
 /**
  * POST /api/payments/resolve
  *
- * Active synchronous-resolution endpoint used by <PendingResolver> on
- * /payments/success when the IPN webhook hasn't landed yet. Calls
- * PayMe's `/api/get-sales` filtered by `custom_1=pay:<paymentId>` to
- * determine the live status, then idempotently completes our DB row
- * if PayMe reports the sale as captured.
+ * DB-only status check. Returns the current Payment status as written
+ * by the IPN webhook. Used by <PendingResolver> on /payments/success
+ * to poll until the webhook flips PENDING → COMPLETED.
  *
- * Logs every step with `[payments/resolve]` prefix so a Vercel log
- * search reveals exactly where resolution stopped.
+ * This endpoint deliberately does NOT call PayMe's API. Production
+ * experience showed PayMe's `/get-sales` returns 200 OK with empty
+ * results even after captured payments for our seller account, which
+ * caused legitimate paid customers to see "still pending" indefinitely.
+ *
+ * Source of truth split:
+ *   - Webhook (`/api/webhooks/payme`) = WRITER. Talks to PayMe, decides
+ *     when a payment is COMPLETED, has its own emergency-trust mode
+ *     using the IPN's price field + DB amount-match.
+ *   - This endpoint = READER. Returns whatever the writer last set.
  *
  * Authorization: must be the same user who owns the Payment row, OR an
- * ADMIN. We don't want users probing each other's payment statuses.
+ * ADMIN.
  */
 
 export const dynamic = "force-dynamic";
@@ -43,86 +44,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "paymentId required" }, { status: 400 });
   }
 
-  console.log("[payments/resolve] start", { paymentId, userId: user.id });
+  console.log("[payments/resolve] read", { paymentId, userId: user.id });
 
-  // Ownership check (also fetch amount for the phase-3 amount fallback)
   const payment = await db.payment.findUnique({
     where: { id: paymentId },
-    select: { userId: true, status: true, type: true, amount: true },
+    select: { userId: true, status: true, type: true },
   });
   if (!payment) {
-    console.error("[payments/resolve] not_found", { paymentId });
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   if (payment.userId !== user.id && user.role !== "ADMIN") {
-    console.error("[payments/resolve] forbidden", { paymentId, userId: user.id });
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   console.log("[payments/resolve] db_status", { status: payment.status });
 
-  // Already completed → short-circuit, no PayMe call needed.
+  // Look up the punch card credits if completed (used to populate the
+  // success message client-side). One DB query, no PayMe round-trip.
   if (payment.status === "COMPLETED") {
     const punchCard = await db.punchCard.findFirst({ where: { paymentId } });
     return NextResponse.json({
       status: "COMPLETED",
       credits: punchCard?.totalCredits ?? 0,
-      completed: false, // wasn't completed by THIS request
     });
   }
-
-  if (payment.status === "REFUNDED") {
-    return NextResponse.json({ status: "REFUNDED", credits: 0, completed: false });
-  }
-
-  if (payment.status === "FAILED") {
-    return NextResponse.json({ status: "FAILED", credits: 0, completed: false });
-  }
-
-  // PENDING — actively ask PayMe (custom_1 path first, then amount fallback).
-  const lookup = await verifyPaymeSaleByCustomRef(`pay:${paymentId}`);
-  console.log("[payments/resolve] payme_custom_lookup", lookup);
-
-  if (lookup.ok && lookup.isCaptured) {
-    const result = await completePaymentSuccess(paymentId, lookup.saleCode);
-    console.log("[payments/resolve] custom_complete_result", result);
-    return NextResponse.json({
-      status: "COMPLETED",
-      credits: "credits" in result ? result.credits : 0,
-      completed: result.kind === "completed",
-    });
-  }
-
-  // Phase 3 fallback — match by amount + recency. PayMe sometimes
-  // strips `custom_1` from /get-sales, so this catches the captured
-  // sale even when the lookup-by-ref returns nothing.
-  const amountLookup = await findCapturedSaleMatchingAmount({
-    amountAgurot: payment.amount,
-    withinMinutes: 10,
-  });
-  console.log("[payments/resolve] payme_amount_lookup", amountLookup);
-
-  if (amountLookup.ok) {
-    const result = await completePaymentSuccess(paymentId, amountLookup.saleCode);
-    console.log("[payments/resolve] amount_complete_result", result);
-    return NextResponse.json({
-      status: "COMPLETED",
-      credits: "credits" in result ? result.credits : 0,
-      completed: result.kind === "completed",
-    });
-  }
-
-  // Both lookups failed. The fallback resolver on the client will retry.
-  console.log("[payments/resolve] still_pending", {
-    customLookupOk: lookup.ok,
-    customReason: !lookup.ok ? lookup.reason : "not_captured",
-    amountReason: !amountLookup.ok ? amountLookup.reason : "captured_but_unmatched",
-  });
 
   return NextResponse.json({
-    status: "PENDING",
+    status: payment.status,
     credits: 0,
-    completed: false,
-    reason: !lookup.ok ? lookup.reason : "sale_not_captured_yet",
   });
 }
