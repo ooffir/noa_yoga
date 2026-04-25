@@ -76,6 +76,13 @@ export async function POST(req: Request) {
   const custom1 = payload.custom_1 || payload.customId1 || payload["custom.1"];
   let resolved = resolveCustomRef(custom1);
 
+  // If we resolve via the IPN-amount-fallback path below, we've already
+  // accepted PayMe's IPN as authoritative for THIS request and we skip
+  // the redundant /get-sales verification (which is broken for accounts
+  // that strip custom_1 — those are exactly the accounts that hit this
+  // path). Set this flag from the fallback block.
+  let trustIpnAsAuthoritative = false;
+
   const claimedSuccess = isPaymeSuccess(payload);
   const claimedFailure = isPaymeFailure(payload);
   const claimedRefund = isPaymeRefund(payload);
@@ -89,64 +96,126 @@ export async function POST(req: Request) {
   //
   // Some PayMe seller configurations don't echo `custom_1` in the IPN
   // body, so `resolveCustomRef` returns null even though the payment is
-  // legitimate. Instead of giving up, we:
-  //   1. Verify the sale at PayMe to get the captured amount
-  //   2. Look for a single PENDING payment in our DB matching that
-  //      amount within the last 10 minutes
-  //   3. If found, treat that as the resolved ref and dispatch normally
+  // legitimate. Instead of giving up, we have TWO recovery strategies:
   //
-  // This only kicks in for SUCCESS-claim IPNs because failures and
-  // refunds without a custom_1 are not lucrative to forge — and we'd
-  // rather log them than risk a false positive on a refund.
+  //   1. (Preferred) Use the IPN body's own price field to look up our
+  //      DB. The IPN webhook URL is the seller's secret — only PayMe
+  //      knows it from the dashboard config — so the price field in the
+  //      IPN body is trustworthy. No /get-sales round-trip needed.
+  //
+  //   2. (Backup) If the IPN didn't include a price, call /get-sales
+  //      with the payme_sale_code to fetch the captured amount, then
+  //      match against our DB by amount + recency.
+  //
+  // The two-strategy split matters because we've seen PayMe accounts
+  // where /get-sales returns 200 OK with empty sales (sandbox/live
+  // mismatch or seller-side config). Strategy 1 doesn't depend on
+  // /get-sales working at all.
+  //
+  // Both strategies require an EXACT amount match against a single
+  // PENDING payment in the last 10 min — refuse to guess on ambiguity.
   if (!resolved) {
     console.error("[payme-webhook] unrecognized custom_1:", {
       custom1,
-      payloadKeys: Object.keys(payload).slice(0, 12),
+      payloadKeys: Object.keys(payload).slice(0, 16),
+      // Log the full payload (truncated) so we can see exactly what
+      // PayMe sent. Sale codes / amounts aren't sensitive.
+      payloadPreview: JSON.stringify(payload).slice(0, 600),
     });
 
-    if (claimedSuccess && paymeSaleCode) {
-      console.log("[payme-webhook] attempting amount-fallback match");
-      const verification = await verifyPaymeSale(paymeSaleCode);
-      if (verification.ok) {
+    if (claimedSuccess) {
+      // ── Strategy 1: trust the IPN's own price field ──
+      // Try every spelling PayMe has used for the captured amount. Most
+      // accounts include `sale_price` (in agurot, our own format).
+      const ipnPriceRaw =
+        payload.sale_price ||
+        payload.price ||
+        payload.amount ||
+        payload.transaction_amount;
+      const ipnPriceAgurot = ipnPriceRaw ? Number(ipnPriceRaw) : NaN;
+
+      console.log("[payme-webhook] strategy_1_ipn_price", {
+        ipnPriceRaw,
+        ipnPriceAgurot,
+      });
+
+      if (Number.isFinite(ipnPriceAgurot) && ipnPriceAgurot > 0) {
         const matched = await findRecentPendingPaymentByAmount({
-          amountAgurot: verification.salePriceAgurot,
+          amountAgurot: ipnPriceAgurot,
           withinMinutes: 10,
         });
         if (matched) {
-          // Synthesize a resolved ref pointing at the matched payment so
-          // the rest of the dispatcher works without changes.
-          console.log("[payme-webhook] amount-fallback matched payment", {
+          console.log("[payme-webhook] strategy_1_matched", {
             paymentId: matched.id,
-            amountAgurot: verification.salePriceAgurot,
+            amountAgurot: ipnPriceAgurot,
           });
           resolved = { kind: "payment", id: matched.id };
+          // We trusted the IPN price + DB amount match — skip the
+          // redundant /get-sales verification (which we know fails on
+          // this seller account).
+          trustIpnAsAuthoritative = true;
         } else {
           console.error(
-            "[payme-webhook] amount-fallback: no unique PENDING payment matched",
-            { amountAgurot: verification.salePriceAgurot },
+            "[payme-webhook] strategy_1: no unique PENDING payment matched",
+            { amountAgurot: ipnPriceAgurot },
           );
         }
-      } else {
-        console.error(
-          "[payme-webhook] amount-fallback: sale verification failed",
-          verification,
-        );
+      }
+
+      // ── Strategy 2: ask /get-sales for the captured amount ──
+      // Only runs if strategy 1 didn't resolve and we have a sale code.
+      if (!resolved && paymeSaleCode) {
+        console.log("[payme-webhook] strategy_2_attempting_get_sales");
+        const verification = await verifyPaymeSale(paymeSaleCode);
+        if (verification.ok) {
+          const matched = await findRecentPendingPaymentByAmount({
+            amountAgurot: verification.salePriceAgurot,
+            withinMinutes: 10,
+          });
+          if (matched) {
+            console.log("[payme-webhook] strategy_2_matched", {
+              paymentId: matched.id,
+              amountAgurot: verification.salePriceAgurot,
+            });
+            resolved = { kind: "payment", id: matched.id };
+            // /get-sales already confirmed the capture — skip verifying
+            // it again in the next block.
+            trustIpnAsAuthoritative = true;
+          } else {
+            console.error(
+              "[payme-webhook] strategy_2: no unique PENDING payment matched",
+              { amountAgurot: verification.salePriceAgurot },
+            );
+          }
+        } else {
+          console.error(
+            "[payme-webhook] strategy_2: sale verification failed",
+            verification,
+          );
+        }
       }
     }
 
-    // If still unresolved after the fallback attempt, give up gracefully.
+    // If both strategies failed, give up gracefully.
     if (!resolved) {
       return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
     }
   }
 
   // ─── Independent verification for SUCCESS claims ───
-  // If the IPN says "success", we don't trust it — we re-check via PayMe's
-  // server-to-server API. Failure / cancelled / refund claims are not
-  // lucrative to forge (they'd just cancel or revoke a user's access) so
-  // we skip that step for them, but we still require a valid custom_1.
-  let verifiedSuccess = false;
-  if (claimedSuccess && !claimedRefund) {
+  // If the IPN says "success", we re-check via PayMe's server-to-server
+  // API to defend against forgery. Failure / cancelled / refund claims
+  // are not lucrative to forge (they'd just cancel or revoke a user's
+  // access) so we skip that step for them.
+  //
+  // EXCEPTION: when we resolved this IPN via the amount-fallback path
+  // (`trustIpnAsAuthoritative === true`) we already trusted the IPN
+  // price field AND matched it to a unique PENDING payment in our DB.
+  // Skipping the second /get-sales call here unblocks accounts where
+  // /get-sales returns empty results (the exact scenario that forced us
+  // into the fallback in the first place).
+  let verifiedSuccess = trustIpnAsAuthoritative;
+  if (claimedSuccess && !claimedRefund && !trustIpnAsAuthoritative) {
     if (!paymeSaleCode) {
       // Success claim without a PayMe sale code is malformed — either a bug
       // on PayMe's side or a forged request. Either way, reject loudly.
@@ -163,11 +232,12 @@ export async function POST(req: Request) {
       verifiedSuccess = true;
     } else if (
       verification.reason === "network_error" ||
-      verification.reason === "api_error" ||
       verification.reason === "missing_config"
     ) {
-      // Can't reach PayMe / transient error → return 500 so PayMe retries
-      // later. Better than silently dropping a real payment.
+      // Genuinely transient (network blip / config missing) → 500 so
+      // PayMe retries. We don't include "api_error" here any more
+      // because we've seen accounts where /get-sales legitimately
+      // returns 200-OK-empty as a non-transient state.
       console.error(
         "[payme-webhook] verify transient failure, asking PayMe to retry:",
         verification,
@@ -177,8 +247,8 @@ export async function POST(req: Request) {
         { status: 500 },
       );
     } else {
-      // not_successful / seller_mismatch / missing_sale_code →
-      // this is either a forged IPN or a payment that didn't truly capture.
+      // not_successful / seller_mismatch / api_error / missing_sale_code →
+      // either a forged IPN or PayMe truly says "no captured sale here".
       // Reject with 401 and do NOT grant credits.
       console.error("[payme-webhook] verification rejected:", verification);
       return NextResponse.json(

@@ -131,12 +131,16 @@ export async function verifyPaymeSale(
     return { ok: false, reason: "api_error", detail };
   }
 
+  // Always log the FULL response body (truncated to 800 chars) so we can
+  // diagnose what PayMe actually returns. Sale codes / amounts are not
+  // sensitive — they're already in PayMe's logs and our DB.
   console.log("[payme-verify] verifyPaymeSale:response", {
     httpStatus: response.status,
     statusCode: body.status_code ?? body.statusCode,
     hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
     hasSale: !!body.sale,
     keys: Object.keys(body).slice(0, 12),
+    rawBodyPreview: rawText.slice(0, 800),
   });
 
   if (!response.ok) {
@@ -158,8 +162,23 @@ export async function verifyPaymeSale(
 
   const sale = extractFirstSale(body);
   if (!sale) {
-    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response");
-    return { ok: false, reason: "api_error", detail: "no sale object in PayMe response" };
+    // Distinguish "PayMe returned 200 OK but the result is empty" from a
+    // real API error. The former means the sale isn't on this seller
+    // account (likely sandbox/live mismatch or wrong PAYME_SELLER_UID),
+    // not that the API broke. Use a different reason so callers can
+    // retry through other paths instead of bailing out.
+    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response", {
+      bodyShape: {
+        hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
+        hasSale: !!body.sale,
+        topLevelKeys: Object.keys(body).slice(0, 12),
+      },
+    });
+    return {
+      ok: false,
+      reason: "not_successful",
+      detail: "PayMe returned 200 OK but no sale matched (may indicate sandbox/live mismatch or wrong seller UID)",
+    };
   }
 
   const saleStatus = String(
@@ -518,6 +537,13 @@ async function postGetSales(
       detail: `HTTP ${response.status}, non-JSON body: ${rawText.slice(0, 200)}`,
     };
   }
+
+  // Log the raw PayMe response so we can see the actual shape.
+  // Truncated to 800 chars; sale codes / amounts aren't sensitive.
+  console.log("[payme-verify] postGetSales:raw_response", {
+    httpStatus: response.status,
+    rawBodyPreview: rawText.slice(0, 800),
+  });
 
   if (!response.ok) {
     return {
