@@ -18,6 +18,7 @@ import {
 import {
   verifyPaymeSale,
   verifyPaymeSaleByCustomRef,
+  findCapturedSaleMatchingAmount,
 } from "@/lib/payme-verify";
 import { PendingResolver } from "@/components/payments/pending-resolver";
 
@@ -103,9 +104,12 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
       // include a sale id OR the webhook hasn't landed yet), actively ask
       // PayMe via /api/get-sales filtered by custom_1=pay:<paymentId>,
       // with a 24h date-window fallback inside the helper.
+      // Selects `amount` here too (used by the phase-3 fallback later)
+      // to avoid re-querying the DB. This object is reassigned after
+      // each phase so downstream code always sees the latest status.
       let dbPayment = await db.payment.findUnique({
         where: { id: paymentId },
-        select: { status: true, type: true },
+        select: { status: true, type: true, amount: true },
       });
 
       console.log("[payments/success] db_status_after_phase1", {
@@ -127,7 +131,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
 
           dbPayment = await db.payment.findUnique({
             where: { id: paymentId },
-            select: { status: true, type: true },
+            select: { status: true, type: true, amount: true },
           });
           console.log("[payments/success] db_status_after_phase2", {
             status: dbPayment?.status,
@@ -141,6 +145,48 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
             "[payments/success] phase2_hard_failure:",
             activeLookup,
           );
+        }
+      }
+
+      // ─── Phase 3 — Amount + timestamp fallback ───
+      // PayMe sometimes strips `custom_1` from both the IPN body and the
+      // /get-sales response. Phase 2 returns "no_sales_found" in that
+      // case. As a final resort we ask PayMe "did you capture a sale of
+      // exactly THIS amount in the last 10 minutes?" — using the amount
+      // we recorded in our Payment row when the user first clicked pay.
+      //
+      // Safe because:
+      //   - We scope to the specific paymentId from the URL (so we know
+      //     exactly which row to complete)
+      //   - PayMe must independently confirm a captured sale of the
+      //     correct amount happened
+      //   - If two captured sales of the same amount exist within the
+      //     window, the helper refuses to guess (returns "ambiguous")
+      //     and we leave the payment PENDING for manual review.
+      if (dbPayment && dbPayment.status === "PENDING") {
+        console.log("[payments/success] phase3_attempting_amount_match", {
+          amountAgurot: dbPayment.amount,
+        });
+        const amountLookup = await findCapturedSaleMatchingAmount({
+          amountAgurot: dbPayment.amount,
+          withinMinutes: 10,
+        });
+        console.log("[payments/success] phase3_lookup", amountLookup);
+
+        if (amountLookup.ok) {
+          const completeResult = await completePaymentSuccess(
+            paymentId,
+            amountLookup.saleCode,
+          );
+          console.log("[payments/success] phase3_complete_result", completeResult);
+
+          dbPayment = await db.payment.findUnique({
+            where: { id: paymentId },
+            select: { status: true, type: true, amount: true },
+          });
+          console.log("[payments/success] db_status_after_phase3", {
+            status: dbPayment?.status,
+          });
         }
       }
 

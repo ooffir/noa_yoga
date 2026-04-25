@@ -328,6 +328,153 @@ export async function verifyPaymeSaleByCustomRef(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Amount + timestamp match — last-resort lookup
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Find a captured sale at PayMe matching the given amount within the
+ * last N minutes. Used as a final fallback when both `custom_1` filter
+ * and direct sale-id verification fail — typically when PayMe's seller
+ * config strips custom fields from the IPN body and the /get-sales
+ * response.
+ *
+ * Caller is expected to have already verified that the requested amount
+ * is unambiguous in their own DB (i.e. only one PENDING payment with
+ * this amount is open right now). The PayMe side just confirms a real
+ * captured sale of that amount happened.
+ *
+ * Returns:
+ *   - ok: true   if EXACTLY ONE captured sale of that amount exists in
+ *                 the time window (the safe match)
+ *   - ok: false  with reason="no_sales_found" if zero matches
+ *   - ok: false  with reason="ambiguous" if 2+ matches (we refuse to
+ *                 guess; caller should manually review)
+ */
+export async function findCapturedSaleMatchingAmount(params: {
+  amountAgurot: number;
+  withinMinutes?: number;
+}): Promise<
+  | { ok: true; saleCode: string; saleStatus: string; salePriceAgurot: number; isCaptured: true }
+  | { ok: false; reason: PaymeCustomLookupReason | "ambiguous"; detail?: string; matchCount?: number }
+> {
+  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
+  const apiUrl = process.env.PAYME_API_URL?.trim();
+  const withinMinutes = params.withinMinutes ?? 10;
+
+  console.log("[payme-verify] amount:start", {
+    amountAgurot: params.amountAgurot,
+    withinMinutes,
+  });
+
+  if (!sellerUid || !apiUrl) {
+    console.error("[payme-verify] amount:missing_config");
+    return { ok: false, reason: "missing_config", detail: "PAYME_SELLER_UID or PAYME_API_URL is unset" };
+  }
+
+  if (!Number.isFinite(params.amountAgurot) || params.amountAgurot <= 0) {
+    return { ok: false, reason: "missing_sale_code", detail: "invalid amount" };
+  }
+
+  const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
+  const verifyUrl = `${baseUrl}/get-sales`;
+
+  // We pull the last 30 minutes (a bit wider than the requested window)
+  // so we can log all captures and pick the recent ones in JS. PayMe's
+  // own date filtering is sometimes flaky, so giving ourselves a bit
+  // more margin and filtering client-side is more reliable.
+  const now = new Date();
+  const broadStart = new Date(now.getTime() - 30 * 60 * 1000);
+
+  const resp = await postGetSales(verifyUrl, {
+    seller_payme_id: sellerUid,
+    start_date: broadStart.toISOString(),
+    end_date: now.toISOString(),
+  });
+
+  if (!resp.ok) {
+    console.error("[payme-verify] amount:request_error", resp);
+    return { ok: false, reason: resp.reason, detail: resp.detail };
+  }
+
+  console.log("[payme-verify] amount:response", {
+    salesReturned: resp.sales.length,
+  });
+
+  const cutoff = new Date(now.getTime() - withinMinutes * 60 * 1000).getTime();
+
+  // Filter to: captured + matching amount + within the recency window.
+  const candidates = resp.sales.filter((s) => {
+    const status = String(s.sale_status ?? s.payme_status ?? s.status ?? "").toLowerCase();
+    if (!isCapturedStatus(status)) return false;
+
+    const price = Number(s.sale_price ?? s.price ?? 0);
+    if (price !== params.amountAgurot) return false;
+
+    // PayMe returns the timestamp under various names. Be defensive.
+    const tsStr =
+      (s.create_date as string) ??
+      (s.created_at as string) ??
+      (s.transmission_date as string) ??
+      (s.transmissionDate as string) ??
+      (s.sale_create_date as string) ??
+      "";
+    const ts = tsStr ? new Date(tsStr).getTime() : NaN;
+    // If PayMe didn't give us a timestamp at all, fall back to "any".
+    // The alternative — silently ignoring the sale — would mean we
+    // can't match anything when timestamps are missing, which is worse.
+    if (Number.isNaN(ts)) return true;
+    return ts >= cutoff;
+  });
+
+  console.log("[payme-verify] amount:candidates", {
+    count: candidates.length,
+    amountAgurot: params.amountAgurot,
+  });
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      reason: "no_sales_found",
+      detail: `no captured sale of ${params.amountAgurot} agurot in last ${withinMinutes} min`,
+      matchCount: 0,
+    };
+  }
+
+  if (candidates.length > 1) {
+    // Two or more captured sales of the same amount within minutes —
+    // this is rare but possible (two students booking the same product).
+    // Refuse to guess; caller should escalate to manual review.
+    console.error("[payme-verify] amount:ambiguous", {
+      count: candidates.length,
+      amountAgurot: params.amountAgurot,
+    });
+    return {
+      ok: false,
+      reason: "ambiguous",
+      detail: `${candidates.length} sales matched — admin must reconcile manually`,
+      matchCount: candidates.length,
+    };
+  }
+
+  const sale = candidates[0];
+  const saleCode = String(sale.payme_sale_code ?? sale.sale_code ?? sale.payme_sale_id ?? sale.sale_id ?? "");
+  const saleStatus = String(sale.sale_status ?? sale.payme_status ?? sale.status ?? "").toLowerCase();
+
+  console.log("[payme-verify] amount:matched", {
+    saleCodePreview: saleCode ? saleCode.slice(0, 8) + "…" : "(empty)",
+    saleStatus,
+  });
+
+  return {
+    ok: true,
+    saleCode,
+    saleStatus,
+    salePriceAgurot: params.amountAgurot,
+    isCaptured: true,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Internals
 // ─────────────────────────────────────────────────────────────────────────────
 

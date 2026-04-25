@@ -134,6 +134,51 @@ export async function completePaymentSuccess(
   return { kind: "completed", paymentId, credits };
 }
 
+/**
+ * Find a single PENDING Payment row matching the given amount that was
+ * created within the last N minutes. Used as a fallback by the IPN
+ * webhook when PayMe doesn't echo `custom_1` in the body — we still
+ * have the captured amount, so we can usually identify the right row.
+ *
+ * Returns:
+ *   - the unique matching Payment if exactly one is found
+ *   - null if zero or 2+ matches (refuse to guess on ambiguity)
+ */
+export async function findRecentPendingPaymentByAmount(params: {
+  amountAgurot: number;
+  withinMinutes?: number;
+}): Promise<{ id: string; userId: string; type: string } | null> {
+  const withinMinutes = params.withinMinutes ?? 10;
+  const since = new Date(Date.now() - withinMinutes * 60 * 1000);
+
+  console.log("[payments] findByAmount:start", {
+    amountAgurot: params.amountAgurot,
+    withinMinutes,
+  });
+
+  const matches = await db.payment.findMany({
+    where: {
+      status: "PENDING",
+      amount: params.amountAgurot,
+      createdAt: { gte: since },
+    },
+    select: { id: true, userId: true, type: true },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  console.log("[payments] findByAmount:result", { matchCount: matches.length });
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) return null;
+
+  console.error("[payments] findByAmount:ambiguous", {
+    matchCount: matches.length,
+    amountAgurot: params.amountAgurot,
+  });
+  return null;
+}
+
 export async function failPayment(paymentId: string): Promise<void> {
   const payment = await db.payment.findUnique({ where: { id: paymentId } });
   if (!payment || payment.status !== "PENDING") return;

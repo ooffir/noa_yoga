@@ -6,6 +6,7 @@ import {
   cancelWorkshop,
   refundPayment,
   resolveCustomRef,
+  findRecentPendingPaymentByAmount,
   isPaymeSuccess,
   isPaymeFailure,
   isPaymeRefund,
@@ -73,19 +74,71 @@ export async function POST(req: Request) {
   const payload = await parseBody(req);
 
   const custom1 = payload.custom_1 || payload.customId1 || payload["custom.1"];
-  const resolved = resolveCustomRef(custom1);
-
-  if (!resolved) {
-    // Unrecognized custom_1 means either a forged/spam IPN or a PayMe
-    // feature we don't handle — surface as error so Vercel logs pick it up.
-    console.error("[payme-webhook] unrecognized custom_1:", custom1);
-    return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
-  }
+  let resolved = resolveCustomRef(custom1);
 
   const claimedSuccess = isPaymeSuccess(payload);
   const claimedFailure = isPaymeFailure(payload);
   const claimedRefund = isPaymeRefund(payload);
-  const paymeSaleCode = payload.payme_sale_code || payload.sale_code;
+  const paymeSaleCode =
+    payload.payme_sale_code ||
+    payload.sale_code ||
+    payload.payme_sale_id ||
+    payload.sale_id;
+
+  // ─── Fallback: amount + timestamp matching when custom_1 is missing ───
+  //
+  // Some PayMe seller configurations don't echo `custom_1` in the IPN
+  // body, so `resolveCustomRef` returns null even though the payment is
+  // legitimate. Instead of giving up, we:
+  //   1. Verify the sale at PayMe to get the captured amount
+  //   2. Look for a single PENDING payment in our DB matching that
+  //      amount within the last 10 minutes
+  //   3. If found, treat that as the resolved ref and dispatch normally
+  //
+  // This only kicks in for SUCCESS-claim IPNs because failures and
+  // refunds without a custom_1 are not lucrative to forge — and we'd
+  // rather log them than risk a false positive on a refund.
+  if (!resolved) {
+    console.error("[payme-webhook] unrecognized custom_1:", {
+      custom1,
+      payloadKeys: Object.keys(payload).slice(0, 12),
+    });
+
+    if (claimedSuccess && paymeSaleCode) {
+      console.log("[payme-webhook] attempting amount-fallback match");
+      const verification = await verifyPaymeSale(paymeSaleCode);
+      if (verification.ok) {
+        const matched = await findRecentPendingPaymentByAmount({
+          amountAgurot: verification.salePriceAgurot,
+          withinMinutes: 10,
+        });
+        if (matched) {
+          // Synthesize a resolved ref pointing at the matched payment so
+          // the rest of the dispatcher works without changes.
+          console.log("[payme-webhook] amount-fallback matched payment", {
+            paymentId: matched.id,
+            amountAgurot: verification.salePriceAgurot,
+          });
+          resolved = { kind: "payment", id: matched.id };
+        } else {
+          console.error(
+            "[payme-webhook] amount-fallback: no unique PENDING payment matched",
+            { amountAgurot: verification.salePriceAgurot },
+          );
+        }
+      } else {
+        console.error(
+          "[payme-webhook] amount-fallback: sale verification failed",
+          verification,
+        );
+      }
+    }
+
+    // If still unresolved after the fallback attempt, give up gracefully.
+    if (!resolved) {
+      return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
+    }
+  }
 
   // ─── Independent verification for SUCCESS claims ───
   // If the IPN says "success", we don't trust it — we re-check via PayMe's
