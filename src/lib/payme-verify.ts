@@ -194,3 +194,158 @@ function extractFirstSale(body: Record<string, unknown>): Record<string, unknown
 
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Custom-ref lookup — used by /payments/success and /workshops to actively
+//  resolve a sale's status the moment the user lands on the return URL,
+//  WITHOUT waiting for PayMe's IPN webhook to arrive.
+//
+//  PayMe's `/api/get-sales` accepts `custom_1` as a filter parameter, so we
+//  can ask "show me the most recent sale tagged with my internal payment id"
+//  and decide success / failure / still pending synchronously. Since each
+//  generate-sale call we make embeds `custom_1: "pay:<paymentId>"` (or
+//  "wsr:<registrationId>"), this lookup is unambiguous per transaction.
+//
+//  Returns the most recent matching sale (PayMe orders by recency by default).
+//  If the same custom_1 yielded multiple captured sales (rare — would require
+//  the user retrying past the 60s server-side dedup window) we use the first
+//  one in the array; the second won't be allowed to grant duplicate credits
+//  by the idempotent `completePaymentSuccess` anyway.
+// ─────────────────────────────────────────────────────────────────────────────
+export type PaymeCustomLookupReason =
+  | "missing_config"
+  | "missing_sale_code"
+  | "api_error"
+  | "seller_mismatch"
+  | "network_error"
+  | "no_sales_found";
+
+export type PaymeCustomLookupResult =
+  | {
+      ok: true;
+      saleCode: string;
+      saleStatus: string;
+      salePriceAgurot: number;
+      isCaptured: boolean;
+    }
+  | { ok: false; reason: PaymeCustomLookupReason; detail?: string };
+
+export async function verifyPaymeSaleByCustomRef(
+  customRef: string,
+): Promise<PaymeCustomLookupResult> {
+  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
+  const apiUrl = process.env.PAYME_API_URL?.trim();
+
+  if (!sellerUid || !apiUrl) {
+    return {
+      ok: false,
+      reason: "missing_config",
+      detail: "PAYME_SELLER_UID or PAYME_API_URL is unset",
+    };
+  }
+  if (!customRef) {
+    return { ok: false, reason: "missing_sale_code", detail: "customRef is empty" };
+  }
+
+  const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
+  const verifyUrl = `${baseUrl}/get-sales`;
+
+  let response: Response;
+  try {
+    response = await fetch(verifyUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        seller_payme_id: sellerUid,
+        // PayMe Direct API supports filtering recent sales by the custom_1
+        // tag we wrote at generate-sale time. This is the same field the
+        // IPN dispatcher reads, so the two paths can never disagree.
+        custom_1: customRef,
+      }),
+      // Active checks happen on the user's return — they're already
+      // staring at a spinner. Keep the timeout tight so the page
+      // doesn't hang past ~3s if PayMe is slow.
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "network_error",
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const rawText = await response.text();
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawText);
+  } catch {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `HTTP ${response.status}, non-JSON: ${rawText.slice(0, 200)}`,
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `HTTP ${response.status}: ${JSON.stringify(body).slice(0, 200)}`,
+    };
+  }
+
+  const statusCode = (body.status_code ?? body.statusCode) as number | string | undefined;
+  if (statusCode !== undefined && String(statusCode) !== "0") {
+    return {
+      ok: false,
+      reason: "api_error",
+      detail: `PayMe returned status_code=${statusCode}`,
+    };
+  }
+
+  // Pick the most recent sale. PayMe returns `sales: [...]` with the
+  // newest one first when filtered. Some shapes return a single sale
+  // inline — extractFirstSale handles both.
+  const sale = extractFirstSale(body);
+  if (!sale) {
+    return {
+      ok: false,
+      reason: "no_sales_found",
+      detail: `no sales found for custom_1=${customRef}`,
+    };
+  }
+
+  const saleCode = String(sale.payme_sale_code ?? sale.sale_code ?? "");
+  const saleStatus = String(
+    sale.sale_status ?? sale.payme_status ?? sale.status ?? "",
+  ).toLowerCase();
+  const salePriceAgurot = Number(sale.sale_price ?? sale.price ?? 0);
+  const saleSellerUid = String(sale.seller_payme_id ?? sale.seller_uid ?? "");
+
+  if (saleSellerUid && saleSellerUid !== sellerUid) {
+    return {
+      ok: false,
+      reason: "seller_mismatch",
+      detail: `response seller=${saleSellerUid.slice(0, 4)}... ours=${sellerUid.slice(0, 4)}...`,
+    };
+  }
+
+  // "Captured" = funds actually collected. PayMe uses several spellings.
+  const isCaptured =
+    saleStatus === "captured" ||
+    saleStatus === "success" ||
+    saleStatus === "paid" ||
+    saleStatus === "1";
+
+  return {
+    ok: true,
+    saleCode,
+    saleStatus,
+    salePriceAgurot,
+    isCaptured,
+  };
+}

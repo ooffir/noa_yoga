@@ -15,10 +15,13 @@ import {
   creditsForPaymentType,
   productLabelFor,
 } from "@/lib/product-catalog";
-import { verifyPaymeSale } from "@/lib/payme-verify";
-import { PendingPoller } from "@/components/payments/pending-poller";
+import {
+  verifyPaymeSale,
+  verifyPaymeSaleByCustomRef,
+} from "@/lib/payme-verify";
+import { PendingResolver } from "@/components/payments/pending-resolver";
 
-// Always read live state so the banner reflects the latest DB status.
+// Always read live state — no caching on this page.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -42,60 +45,84 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
 
   if (paymentId) {
     try {
-      // ─── Self-heal: complete the payment if PayMe signals success ───
-      // Like the webhook, we don't blindly trust URL query params. A user
-      // can trivially craft `?payment=<id>&payme_status=success` in their
-      // address bar — so we re-verify via PayMe's server-to-server API
-      // before granting any credits. Without verification the whole C4
-      // hardening would be bypassable through this page.
+      // ─── Phase 1 — URL-based self-heal (legacy path, kept as first-try) ───
+      // If PayMe redirected with a sale code in the URL, verify that
+      // specific sale directly. Cheaper than the custom-ref lookup
+      // because we don't need a list scan.
       const urlSaleCode = sp.payme_sale_code || sp.sale_code || null;
-
       if (
         isPaymeSuccess({
           payme_status: sp.payme_status,
           status: sp.status,
           status_code: sp.status_code,
-        })
+        }) &&
+        urlSaleCode
       ) {
-        if (urlSaleCode) {
-          const verification = await verifyPaymeSale(urlSaleCode);
-          if (verification.ok) {
-            await completePaymentSuccess(paymentId, urlSaleCode);
-          } else {
-            // Failed verification is an error condition — surface it to logs.
-            console.error(
-              "[payments/success] URL success claim failed verification:",
-              verification,
-            );
-          }
+        const verification = await verifyPaymeSale(urlSaleCode);
+        if (verification.ok) {
+          await completePaymentSuccess(paymentId, urlSaleCode);
         } else {
-          // No sale code means we can't verify — don't self-heal here.
-          // The real PayMe IPN webhook is still the authoritative path.
           console.error(
-            "[payments/success] success claim has no sale code, skipping self-heal",
+            "[payments/success] URL success claim failed verification:",
+            verification,
           );
         }
-      } else if (isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })) {
+      } else if (
+        isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
+      ) {
         await failPayment(paymentId);
       }
 
-      const payment = await db.payment.findUnique({
+      // ─── Phase 2 — ACTIVE custom-ref lookup ───
+      // If we still don't see COMPLETED in the DB (either the URL didn't
+      // include a sale code OR the webhook hasn't landed yet), actively
+      // ask PayMe via /api/get-sales filtered by custom_1=pay:<paymentId>.
+      // This is the synchronous verification the user requested — it
+      // resolves the page without depending on the IPN at all.
+      let dbPayment = await db.payment.findUnique({
         where: { id: paymentId },
         select: { status: true, type: true },
       });
 
-      if (payment) {
-        status = payment.status === "REFUNDED" ? "COMPLETED" : payment.status;
-        productLabel = productLabelFor(payment.type);
-        creditsGranted = creditsForPaymentType(payment.type);
+      if (dbPayment && dbPayment.status === "PENDING") {
+        const activeLookup = await verifyPaymeSaleByCustomRef(`pay:${paymentId}`);
+        if (activeLookup.ok && activeLookup.isCaptured) {
+          // Found a captured sale — complete idempotently. The webhook
+          // landing later is harmless; completePaymentSuccess returns
+          // `already_completed` on the second call.
+          await completePaymentSuccess(paymentId, activeLookup.saleCode);
+          // Re-read after the active resolution.
+          dbPayment = await db.payment.findUnique({
+            where: { id: paymentId },
+            select: { status: true, type: true },
+          });
+        } else if (
+          activeLookup.ok === false &&
+          activeLookup.reason !== "no_sales_found" &&
+          activeLookup.reason !== "network_error"
+        ) {
+          // Hard-rejected lookup (api_error, seller_mismatch, missing_config)
+          // is worth surfacing in logs — the operator might have a misconfig.
+          console.error(
+            "[payments/success] custom-ref lookup rejected:",
+            activeLookup,
+          );
+        }
+        // network_error / no_sales_found just fall through; the resolver
+        // component below handles the residual "still pending" cases.
       }
 
-      // ─── Auto-book into the class the user clicked "הרשמה" on ───
-      // Only fire when:
-      //   - payment completed successfully
-      //   - the redirect carried a class id to book
-      // The booking engine deducts a credit; we just granted one, so the
-      // net effect for a single-class purchase is 0 credits remaining.
+      if (dbPayment) {
+        status =
+          dbPayment.status === "REFUNDED" ? "COMPLETED" : dbPayment.status;
+        productLabel = productLabelFor(dbPayment.type);
+        creditsGranted = creditsForPaymentType(dbPayment.type);
+      }
+
+      // ─── Auto-book the class the user came from (if applicable) ───
+      // Only after the payment is confirmed COMPLETED. Engine deducts the
+      // credit; we just granted one — net effect for SINGLE_CLASS is
+      // 0 remaining, perfect.
       if (status === "COMPLETED" && bookClassInstanceId) {
         try {
           const user = await getDbUser();
@@ -109,7 +136,6 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
           }
         } catch (err) {
           const reason = err instanceof Error ? err.message : "הרישום לשיעור נכשל";
-          // Common case: user already booked this class (double-submit). Treat as success.
           if (reason.includes("כבר רשום")) {
             bookingOutcome = { kind: "booked" };
           } else {
@@ -159,7 +185,13 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
             </>
           )}
 
-          {status === "PENDING" && <PendingPoller />}
+          {/* PENDING after both URL self-heal AND custom-ref lookup —
+              very rare. Could be: PayMe latency > 8s, sandbox quirk, or
+              the user landed before PayMe even captured. The resolver
+              component runs a brief silent retry then escalates. */}
+          {status === "PENDING" && paymentId && (
+            <PendingResolver paymentId={paymentId} />
+          )}
 
           {(status === "FAILED" || status === "UNKNOWN") && (
             <>
@@ -189,7 +221,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
                   </Button>
                 </Link>
               </>
-            ) : (
+            ) : status === "FAILED" || status === "UNKNOWN" ? (
               <>
                 <Link href="/pricing">
                   <Button className="rounded-2xl">חזרה למחירון</Button>
@@ -200,7 +232,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
                   </Button>
                 </Link>
               </>
-            )}
+            ) : null}
           </div>
         </CardContent>
       </Card>
