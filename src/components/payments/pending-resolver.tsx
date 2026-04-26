@@ -54,19 +54,51 @@ export function PendingResolver({ paymentId }: Props) {
 
     async function poll() {
       try {
-        const res = await fetch("/api/payments/resolve", {
+        // Cache-bust the URL to defeat any intermediate caches (browser,
+        // CDN, service worker) that might serve a stale "PENDING"
+        // snapshot. `cache: "no-store"` covers the fetch layer; the
+        // ?_t=... query param covers everything else.
+        const cacheBust = Date.now();
+        const res = await fetch(`/api/payments/resolve?_t=${cacheBust}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+          cache: "no-store",
           body: JSON.stringify({ paymentId }),
         });
 
         if (cancelled || cancelledRef.current) return;
 
+        console.log("[pending-resolver] poll", {
+          attempt,
+          paymentId,
+          httpStatus: res.status,
+        });
+
         if (res.ok) {
           const data = await res.json();
+          console.log("[pending-resolver] response", { paymentId, data });
+
           if (data.status === "COMPLETED" || data.status === "FAILED") {
-            // DB has resolved → re-render the server component.
+            console.log(
+              "[pending-resolver] terminal status — refreshing page",
+              { paymentId, status: data.status },
+            );
+            // Belt-and-suspenders: router.refresh() first (fastest, no
+            // scroll jump). If the server component doesn't re-render
+            // within 600ms (caches, build issues, etc), force a full
+            // reload as a guarantee. By the time the reload happens,
+            // the DB is COMPLETED and the page renders the green check.
             router.refresh();
+            setTimeout(() => {
+              if (!cancelledRef.current) {
+                console.log("[pending-resolver] forcing full reload");
+                window.location.reload();
+              }
+            }, 600);
             return;
           }
         }

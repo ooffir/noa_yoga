@@ -24,24 +24,48 @@ import { db } from "@/lib/db";
  * ADMIN.
  */
 
+// Three layers of "no caching":
+//  1. `force-dynamic`     — Next.js will not pre-render or static-cache
+//  2. `revalidate = 0`    — never serve from the Data Cache
+//  3. `fetchCache="..."`  — disables the per-request fetch cache
+// All three together guarantee every poll reaches the DB freshly.
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+
+/**
+ * Build a JSON response with explicit no-store headers so neither the
+ * browser, an intermediate CDN, nor a service worker can serve a stale
+ * "PENDING" snapshot. The poller cache-busts on the request side too;
+ * these headers cover the response side.
+ */
+function jsonNoStore(body: Record<string, unknown>, init?: { status?: number }) {
+  return NextResponse.json(body, {
+    status: init?.status ?? 200,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      Pragma: "no-cache",
+      Expires: "0",
+    },
+  });
+}
 
 export async function POST(req: Request) {
   const user = await getDbUser();
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
   }
 
   let body: { paymentId?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+    return jsonNoStore({ error: "invalid JSON" }, { status: 400 });
   }
 
   const paymentId = body.paymentId;
   if (!paymentId || typeof paymentId !== "string") {
-    return NextResponse.json({ error: "paymentId required" }, { status: 400 });
+    return jsonNoStore({ error: "paymentId required" }, { status: 400 });
   }
 
   console.log("[payments/resolve] read", { paymentId, userId: user.id });
@@ -51,25 +75,28 @@ export async function POST(req: Request) {
     select: { userId: true, status: true, type: true },
   });
   if (!payment) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
+    console.error("[payments/resolve] not_found", { paymentId });
+    return jsonNoStore({ error: "not found" }, { status: 404 });
   }
   if (payment.userId !== user.id && user.role !== "ADMIN") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    console.error("[payments/resolve] forbidden", { paymentId, userId: user.id });
+    return jsonNoStore({ error: "forbidden" }, { status: 403 });
   }
 
-  console.log("[payments/resolve] db_status", { status: payment.status });
+  console.log("[payments/resolve] db_status", {
+    paymentId,
+    status: payment.status,
+  });
 
-  // Look up the punch card credits if completed (used to populate the
-  // success message client-side). One DB query, no PayMe round-trip.
   if (payment.status === "COMPLETED") {
     const punchCard = await db.punchCard.findFirst({ where: { paymentId } });
-    return NextResponse.json({
+    return jsonNoStore({
       status: "COMPLETED",
       credits: punchCard?.totalCredits ?? 0,
     });
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     status: payment.status,
     credits: 0,
   });

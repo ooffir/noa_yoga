@@ -92,6 +92,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
       });
 
       console.log("[payments/success] db_status", {
+        paymentId,
         status: dbPayment?.status,
       });
 
@@ -129,7 +130,7 @@ export default async function PaymentSuccessPage({ searchParams }: Props) {
         }
       }
 
-      console.log("[payments/success] final_status", { status });
+      console.log("[payments/success] final_status", { paymentId, status });
     } catch (err) {
       console.error("[payments/success] resolve error:", err);
     }
