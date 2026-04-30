@@ -10,18 +10,36 @@
  * (PAYME_SELLER_UID / PAYME_API_URL) were pointing at sandbox while the
  * actual money was being captured against the production seller UID.
  *
- * To eliminate that whole class of bug, the verification helper now
- * pins the production seller UID and the production /get-sales URL as
+ * To eliminate that whole class of bug, the verification helper pins
+ * the production seller UID and the production /get-sales URL as
  * file-local constants. Env vars are ignored on this code path. If we
  * ever need to verify against sandbox for testing, change the constants
- * directly (or add a separate `verifyPaymeSaleSandbox` helper) — the
- * trade-off here is "fewer footguns" over "configurable".
+ * directly (or add a separate sandbox helper).
  *
- * The webhook (src/app/api/webhooks/payme/route.ts) calls this helper
- * as the secondary authenticity check when an MD5 signature isn't
- * available. Pinning to production guarantees that "verification
- * passed" really means "PayMe live confirmed this sale captured for
- * our seller".
+ * ──────────────────────────────────────────────────────────────────────
+ *  Response shape — what live.payme.io/api/get-sales actually returns
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * Production logs confirmed PayMe's /get-sales for our seller returns:
+ *
+ *   {
+ *     "status_code": 0,
+ *     "items_count": 1,
+ *     "items": [
+ *       {
+ *         "sale_payme_code": "...",     ← note: sale_payme_code, NOT payme_sale_code
+ *         "sale_status": "captured",
+ *         "sale_price": 5000,
+ *         "seller_payme_id": "MPL17762-...",
+ *         ...
+ *       }
+ *     ]
+ *   }
+ *
+ * Our parser previously expected `body.sales` + `payme_sale_code` and
+ * silently fell off the empty path. The current implementation reads
+ * `body.items` first (fallback to `body.sales` for backwards-compat),
+ * and matches on either `sale_payme_code` OR `payme_sale_code`.
  *
  * Docs: https://docs.payme.io
  */
@@ -29,8 +47,7 @@
 // ── HARDCODED production constants ──
 // DO NOT replace these with process.env reads.
 // The whole point of this refactor is to make the verification path
-// invariant to environment-variable misconfiguration. Sandbox testing
-// should use a separate helper, not these constants.
+// invariant to environment-variable misconfiguration.
 const PRODUCTION_SELLER_UID = "MPL17762-59691SAB-JV1YBNMN-ELCH62AX";
 const PRODUCTION_API_URL = "https://live.payme.io/api/get-sales";
 
@@ -66,13 +83,12 @@ export type PaymeVerifyResult =
  *
  * `saleCode` may come from the IPN body or the return URL — PayMe's
  * field names are inconsistent (`payme_sale_code` / `payme_sale_id` /
- * `sale_code` / `sale_id`), but they all carry the same value, so the
- * caller should pass whichever one they have.
+ * `sale_code` / `sale_id` / `sale_payme_code`), but they all carry the
+ * same value, so the caller should pass whichever one they have.
  *
  * Defensive: we send BOTH `payme_sale_code` AND `payme_sale_id` in the
  * request body because PayMe's docs disagree on which one /get-sales
- * filters on. This guarantees the right field name is recognised
- * regardless of the seller account's API-version setting.
+ * filters on. We also handle the response in either array format.
  */
 export async function verifyPaymeSale(
   saleCode: string,
@@ -119,13 +135,12 @@ export async function verifyPaymeSale(
     return { ok: false, reason: "api_error", detail };
   }
 
-  // Always log the FULL response so a single Vercel log entry shows
-  // exactly what PayMe returned. Sale codes / amounts are not
-  // sensitive — they're already in the merchant dashboard.
   console.log("[payme-verify] verifyPaymeSale:response", {
     httpStatus: response.status,
     statusCode: body.status_code ?? body.statusCode,
-    hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
+    itemsCount: (body.items_count as number | undefined) ?? "n/a",
+    itemsLen: Array.isArray(body.items) ? body.items.length : "n/a",
+    salesLen: Array.isArray(body.sales) ? body.sales.length : "n/a",
     hasSale: !!body.sale,
     rawBodyPreview: rawText.slice(0, 800),
   });
@@ -150,28 +165,37 @@ export async function verifyPaymeSale(
     };
   }
 
-  const sale = extractFirstSale(body);
+  // Find the sale that matches the saleCode the caller asked about.
+  // PayMe's response array is `items` on production; the older docs
+  // also show `sales`. Match by either `sale_payme_code` (live shape)
+  // or `payme_sale_code` (older / docs shape).
+  const sale = findMatchingSale(body, saleCode);
   if (!sale) {
-    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response", {
+    console.error("[payme-verify] verifyPaymeSale:no_matching_sale", {
+      saleCodePreview: saleCode.slice(0, 8) + "…",
       bodyShape: {
-        hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
+        itemsCount: body.items_count,
+        itemsLen: Array.isArray(body.items) ? body.items.length : "n/a",
+        salesLen: Array.isArray(body.sales) ? body.sales.length : "n/a",
         hasSale: !!body.sale,
         topLevelKeys: Object.keys(body).slice(0, 12),
       },
     });
-    // 200 OK with empty result = "this sale doesn't exist on the LIVE
-    // production seller account we just queried". Could mean: the sale
-    // really doesn't exist (forged IPN), or — much rarer now that we
-    // pin to live — PayMe's API has lag. Treat as not_successful
-    // (permanent reject) so the webhook returns 401 instead of 500.
+    // 200 OK with no matching sale = forged IPN OR PayMe-side lag.
+    // Treat as not_successful (permanent reject) so the webhook
+    // returns 401 instead of 500.
     return {
       ok: false,
       reason: "not_successful",
-      detail:
-        "PayMe live returned 200 OK but no matching sale (forged IPN or PayMe-side lag)",
+      detail: "PayMe live returned 200 OK but no matching sale (forged IPN or PayMe-side lag)",
     };
   }
 
+  // Pull fields with both modern + legacy names so a future shape
+  // change on PayMe's side doesn't silently break us.
+  const matchedSaleCode = String(
+    sale.sale_payme_code ?? sale.payme_sale_code ?? sale.sale_code ?? saleCode,
+  );
   const saleStatus = String(
     sale.sale_status ?? sale.payme_status ?? sale.status ?? "",
   ).toLowerCase();
@@ -181,6 +205,7 @@ export async function verifyPaymeSale(
   );
 
   console.log("[payme-verify] verifyPaymeSale:sale", {
+    matchedSaleCodePreview: matchedSaleCode.slice(0, 8) + "…",
     saleStatus,
     salePriceAgurot,
     sellerMatches: !saleSellerUid || saleSellerUid === PRODUCTION_SELLER_UID,
@@ -213,7 +238,12 @@ export async function verifyPaymeSale(
   }
 
   console.log("[payme-verify] verifyPaymeSale:OK");
-  return { ok: true, saleCode, saleStatus, salePriceAgurot };
+  return {
+    ok: true,
+    saleCode: matchedSaleCode,
+    saleStatus,
+    salePriceAgurot,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,28 +251,82 @@ export async function verifyPaymeSale(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * PayMe's /get-sales response comes in three shapes depending on the
- * seller account's API version. Probe each in priority order and
- * return whichever one carries the sale data.
+ * Find the sale in PayMe's response that matches the saleCode the
+ * caller asked about.
+ *
+ * Response-shape priority:
+ *   1. body.items[]   — the production live.payme.io shape
+ *   2. body.sales[]   — older / docs shape (kept for safety)
+ *   3. body.sale      — single-sale shape (very old)
+ *   4. body itself    — flattened shape (rare but documented)
+ *
+ * Within each item, we match against ANY of these field names — and
+ * cast to string on both sides because PayMe sometimes returns ids as
+ * numbers and sometimes as strings:
+ *   - sale_payme_code   (current live shape)
+ *   - payme_sale_code   (older shape)
+ *   - sale_code         (alternative)
+ *   - payme_sale_id / sale_id (rare)
+ *
+ * Returns the first match, or null.
  */
-function extractFirstSale(
+function findMatchingSale(
   body: Record<string, unknown>,
+  saleCode: string,
 ): Record<string, unknown> | null {
-  // Shape 1: { sales: [ { ... } ] }
+  const target = String(saleCode);
+
+  const itemMatches = (item: Record<string, unknown>): boolean => {
+    const candidates = [
+      item.sale_payme_code,
+      item.payme_sale_code,
+      item.sale_code,
+      item.payme_sale_id,
+      item.sale_id,
+    ];
+    return candidates.some(
+      (c) => c !== undefined && c !== null && String(c) === target,
+    );
+  };
+
+  // 1. items[] — production live shape
+  if (Array.isArray(body.items) && body.items.length > 0) {
+    for (const it of body.items) {
+      if (it && typeof it === "object") {
+        const obj = it as Record<string, unknown>;
+        if (itemMatches(obj)) return obj;
+      }
+    }
+    // No exact match in items[] — return null rather than picking the
+    // first arbitrary item. Picking arbitrarily would let a different
+    // sale's status mark our payment COMPLETED.
+  }
+
+  // 2. sales[] — older shape (kept for forward/backward compatibility)
   if (Array.isArray(body.sales) && body.sales.length > 0) {
-    const first = body.sales[0];
-    if (first && typeof first === "object")
-      return first as Record<string, unknown>;
+    for (const it of body.sales) {
+      if (it && typeof it === "object") {
+        const obj = it as Record<string, unknown>;
+        if (itemMatches(obj)) return obj;
+      }
+    }
   }
 
-  // Shape 2: { sale: { ... } }
+  // 3. body.sale — single object
   if (body.sale && typeof body.sale === "object") {
-    return body.sale as Record<string, unknown>;
+    const obj = body.sale as Record<string, unknown>;
+    if (itemMatches(obj)) return obj;
   }
 
-  // Shape 3: fields on the top-level body (single-sale response)
-  if (body.payme_sale_code || body.sale_status || body.sale_price) {
-    return body;
+  // 4. flattened shape — sale fields directly on body
+  if (
+    body.sale_payme_code ||
+    body.payme_sale_code ||
+    body.sale_code ||
+    body.sale_status ||
+    body.sale_price
+  ) {
+    if (itemMatches(body)) return body;
   }
 
   return null;
