@@ -335,10 +335,7 @@ export async function POST(req: Request) {
       const apiResult = await verifyPaymeSale(paymeSaleCode);
 
       if (!apiResult.ok) {
-        if (
-          apiResult.reason === "network_error" ||
-          apiResult.reason === "missing_config"
-        ) {
+        if (apiResult.reason === "network_error") {
           // Transient — let PayMe retry.
           console.error(
             "[payme-webhook] API verification transient failure",

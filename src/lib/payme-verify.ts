@@ -1,22 +1,42 @@
 /**
- * PayMe IPN verification — the single helper used by the webhook to
- * confirm a sale really captured for our seller before crediting.
+ * PayMe IPN verification — production-pinned.
  *
- * Why this matters:
- *   The webhook body is untrusted — anyone with our /api/webhooks/payme
- *   URL could forge a POST. Instead of trusting the body, we re-check
- *   via PayMe's `/api/get-sales` endpoint with the received
- *   `payme_sale_code`. PayMe responds with the authoritative status,
- *   amount, and seller — letting us reject forgeries.
+ * ──────────────────────────────────────────────────────────────────────
+ *  Why hardcoded constants
+ * ──────────────────────────────────────────────────────────────────────
  *
- * This is one of two webhook authenticity checks. The webhook prefers
- * MD5 signature verification (cheaper, no network round-trip) and only
- * falls back to this server-to-server call if no signature is present.
+ * Earlier diagnostics revealed that this helper was failing with
+ * "PayMe returned 200 OK but no matching sale" because the env vars
+ * (PAYME_SELLER_UID / PAYME_API_URL) were pointing at sandbox while the
+ * actual money was being captured against the production seller UID.
+ *
+ * To eliminate that whole class of bug, the verification helper now
+ * pins the production seller UID and the production /get-sales URL as
+ * file-local constants. Env vars are ignored on this code path. If we
+ * ever need to verify against sandbox for testing, change the constants
+ * directly (or add a separate `verifyPaymeSaleSandbox` helper) — the
+ * trade-off here is "fewer footguns" over "configurable".
+ *
+ * The webhook (src/app/api/webhooks/payme/route.ts) calls this helper
+ * as the secondary authenticity check when an MD5 signature isn't
+ * available. Pinning to production guarantees that "verification
+ * passed" really means "PayMe live confirmed this sale captured for
+ * our seller".
  *
  * Docs: https://docs.payme.io
- *   Base URLs — Staging:    https://sandbox.payme.io/api
- *               Production: https://live.payme.io/api
  */
+
+// ── HARDCODED production constants ──
+// DO NOT replace these with process.env reads.
+// The whole point of this refactor is to make the verification path
+// invariant to environment-variable misconfiguration. Sandbox testing
+// should use a separate helper, not these constants.
+const PRODUCTION_SELLER_UID = "MPL17762-59691SAB-JV1YBNMN-ELCH62AX";
+const PRODUCTION_API_URL = "https://live.payme.io/api/get-sales";
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public types
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type PaymeVerifyResult =
   | {
@@ -28,7 +48,6 @@ export type PaymeVerifyResult =
   | {
       ok: false;
       reason:
-        | "missing_config"
         | "missing_sale_code"
         | "api_error"
         | "not_successful"
@@ -37,56 +56,48 @@ export type PaymeVerifyResult =
       detail?: string;
     };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  verifyPaymeSale — server-to-server lookup against live.payme.io
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Verify a specific sale by its PayMe identifier. PayMe's URL params
- * sometimes use `payme_sale_code`, sometimes `payme_sale_id`, sometimes
- * `sale_code` / `sale_id` — they're the same value, so callers should
- * pass whichever one they have.
+ * Verify a specific sale by its PayMe identifier against the LIVE
+ * production endpoint, using the LIVE production seller UID.
+ *
+ * `saleCode` may come from the IPN body or the return URL — PayMe's
+ * field names are inconsistent (`payme_sale_code` / `payme_sale_id` /
+ * `sale_code` / `sale_id`), but they all carry the same value, so the
+ * caller should pass whichever one they have.
  *
  * Defensive: we send BOTH `payme_sale_code` AND `payme_sale_id` in the
- * request body because PayMe's docs are inconsistent about which name
- * /get-sales actually filters on.
+ * request body because PayMe's docs disagree on which one /get-sales
+ * filters on. This guarantees the right field name is recognised
+ * regardless of the seller account's API-version setting.
  */
 export async function verifyPaymeSale(
   saleCode: string,
 ): Promise<PaymeVerifyResult> {
-  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
-  const apiUrl = process.env.PAYME_API_URL?.trim();
-
   console.log("[payme-verify] verifyPaymeSale:start", {
     saleCodePreview: saleCode ? saleCode.slice(0, 8) + "…" : "(empty)",
-    sellerUidSet: !!sellerUid,
-    apiUrlSet: !!apiUrl,
+    forcedApiUrl: PRODUCTION_API_URL,
+    forcedSellerUidPrefix: PRODUCTION_SELLER_UID.slice(0, 8) + "…",
   });
-
-  if (!sellerUid || !apiUrl) {
-    console.error("[payme-verify] verifyPaymeSale:missing_config");
-    return {
-      ok: false,
-      reason: "missing_config",
-      detail: "PAYME_SELLER_UID or PAYME_API_URL is unset",
-    };
-  }
 
   if (!saleCode) {
     console.error("[payme-verify] verifyPaymeSale:missing_sale_code");
     return { ok: false, reason: "missing_sale_code" };
   }
 
-  // Derive base and swap endpoint: .../api/generate-sale → .../api/get-sales
-  const baseUrl = apiUrl.replace(/\/generate-sale\/?$/, "");
-  const verifyUrl = `${baseUrl}/get-sales`;
-
   let response: Response;
   try {
-    response = await fetch(verifyUrl, {
+    response = await fetch(PRODUCTION_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
       body: JSON.stringify({
-        seller_payme_id: sellerUid,
+        seller_payme_id: PRODUCTION_SELLER_UID,
         payme_sale_code: saleCode,
         payme_sale_id: saleCode,
       }),
@@ -108,12 +119,15 @@ export async function verifyPaymeSale(
     return { ok: false, reason: "api_error", detail };
   }
 
+  // Always log the FULL response so a single Vercel log entry shows
+  // exactly what PayMe returned. Sale codes / amounts are not
+  // sensitive — they're already in the merchant dashboard.
   console.log("[payme-verify] verifyPaymeSale:response", {
     httpStatus: response.status,
     statusCode: body.status_code ?? body.statusCode,
     hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
     hasSale: !!body.sale,
-    rawBodyPreview: rawText.slice(0, 600),
+    rawBodyPreview: rawText.slice(0, 800),
   });
 
   if (!response.ok) {
@@ -138,16 +152,23 @@ export async function verifyPaymeSale(
 
   const sale = extractFirstSale(body);
   if (!sale) {
-    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response");
-    // 200 OK with empty result = "this seller doesn't have that sale".
-    // Could be a sandbox/live mismatch, a wrong PAYME_SELLER_UID, or a
-    // forgery attempt. Treat as not-successful (permanent), not api_error
-    // (transient). Webhook will reject with 401.
+    console.error("[payme-verify] verifyPaymeSale:no_sale_in_response", {
+      bodyShape: {
+        hasSales: Array.isArray(body.sales) ? body.sales.length : "n/a",
+        hasSale: !!body.sale,
+        topLevelKeys: Object.keys(body).slice(0, 12),
+      },
+    });
+    // 200 OK with empty result = "this sale doesn't exist on the LIVE
+    // production seller account we just queried". Could mean: the sale
+    // really doesn't exist (forged IPN), or — much rarer now that we
+    // pin to live — PayMe's API has lag. Treat as not_successful
+    // (permanent reject) so the webhook returns 401 instead of 500.
     return {
       ok: false,
       reason: "not_successful",
       detail:
-        "PayMe returned 200 OK but no matching sale (check seller UID / environment)",
+        "PayMe live returned 200 OK but no matching sale (forged IPN or PayMe-side lag)",
     };
   }
 
@@ -162,18 +183,18 @@ export async function verifyPaymeSale(
   console.log("[payme-verify] verifyPaymeSale:sale", {
     saleStatus,
     salePriceAgurot,
-    sellerMatches: !saleSellerUid || saleSellerUid === sellerUid,
+    sellerMatches: !saleSellerUid || saleSellerUid === PRODUCTION_SELLER_UID,
   });
 
-  if (saleSellerUid && saleSellerUid !== sellerUid) {
+  if (saleSellerUid && saleSellerUid !== PRODUCTION_SELLER_UID) {
     return {
       ok: false,
       reason: "seller_mismatch",
-      detail: `response seller=${saleSellerUid.slice(0, 4)}... ours=${sellerUid.slice(0, 4)}...`,
+      detail: `response seller=${saleSellerUid.slice(0, 4)}... ours=${PRODUCTION_SELLER_UID.slice(0, 4)}...`,
     };
   }
 
-  // PayMe spellings observed in the wild:
+  // PayMe spellings observed in the wild for "captured":
   //   "captured", "success", "1", "paid", "completed", "approved"
   const isCaptured =
     saleStatus === "captured" ||
@@ -199,6 +220,11 @@ export async function verifyPaymeSale(
 //  Internals
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * PayMe's /get-sales response comes in three shapes depending on the
+ * seller account's API version. Probe each in priority order and
+ * return whichever one carries the sale data.
+ */
 function extractFirstSale(
   body: Record<string, unknown>,
 ): Record<string, unknown> | null {
