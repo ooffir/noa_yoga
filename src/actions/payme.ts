@@ -2,19 +2,48 @@
 
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
+import {
+  productLabelFor,
+  type CreditPurchaseType,
+} from "@/lib/product-catalog";
 
 /**
  * PayMe REST integration — Hosted Payment Page (generate-sale).
  *
- * Docs: https://developers.paymeservice.com/
+ * Production-stable refactor (April 2026):
  *
- * Two sale kinds share this single integration:
- *   - Workshop registration  → custom_1 = "wsr:<registrationId>"
- *   - Credit / punch card    → custom_1 = "pay:<paymentId>"
+ *   1. Endpoint and seller UID are PRODUCTION constants. Env vars override
+ *      them only if you need to switch back to sandbox for testing.
+ *   2. We pass `sale_payment_method: "multi"` so credit card + Apple Pay +
+ *      Google Pay + Bit are all eligible (subject to seller-account toggles).
+ *   3. We map our internal DB id (Payment.id or WorkshopRegistration.id)
+ *      directly into PayMe's `transaction_id` field. PayMe echoes
+ *      `transaction_id` back in the IPN — that's the ONLY identifier we
+ *      use to dispatch incoming webhooks. No more `custom_1` games.
  *
- * The webhook at /api/webhooks/payme parses the custom_1 prefix to
- * dispatch the correct DB update.
+ * Docs: https://docs.payme.io/docs/payments/86407fa137745-hosted-payment-page
  */
+
+// ── Production constants (PayMe live environment for Noa Yogis) ──
+//
+// Hardcoded as defaults so a misconfigured env doesn't silently pull
+// us into sandbox. Override via env vars only for explicit testing.
+const PRODUCTION_API_URL =
+  "https://live.payme.io/api/generate-sale";
+const PRODUCTION_SELLER_UID =
+  "MPL17762-59691SAB-JV1YBNMN-ELCH62AX";
+
+const PAYME_API_URL =
+  process.env.PAYME_API_URL?.trim() || PRODUCTION_API_URL;
+const PAYME_SELLER_UID =
+  process.env.PAYME_SELLER_UID?.trim() || PRODUCTION_SELLER_UID;
+
+// PayMe spec: transaction_id must be a string, max 50 chars.
+const PAYME_TXN_ID_MAX = 50;
+
+// ─────────────────────────────────────────────────────────────────────
+//  Types
+// ─────────────────────────────────────────────────────────────────────
 
 export type PaymeSaleResult =
   | { ok: true; url: string }
@@ -28,170 +57,152 @@ interface PaymeGenerateSaleResponse {
   payme_sale_code?: string;
 }
 
-interface PaymeSaleInput {
+interface CallGenerateSaleInput {
+  /** Price the buyer sees, in ILS (we convert to agurot here). */
   amountIls: number;
+  /** Display name on the PayMe checkout page. */
   productName: string;
-  customRef: string;
-  userId: string;
-  extraCustom?: string;
+  /**
+   * Our internal DB primary key (Payment.id or WorkshopRegistration.id).
+   * PayMe will echo this back in the IPN, allowing reliable dispatch.
+   * Must be ≤ 50 chars (PayMe spec); UUIDs (36 chars) fit comfortably.
+   */
+  transactionId: string;
   userEmail?: string | null;
   userName?: string | null;
+  /** Browser redirect after successful payment. */
   returnPath: string;
+  /** Browser redirect if the buyer cancels on PayMe's page. */
   cancelPath: string;
 }
 
-/**
- * Shared helper: talks to PayMe's /api/generate-sale endpoint.
- */
-async function callGenerateSale(input: PaymeSaleInput): Promise<PaymeSaleResult> {
-  const sellerUid = process.env.PAYME_SELLER_UID?.trim();
-  const apiUrl = process.env.PAYME_API_URL?.trim();
-  // Strip trailing slash to prevent "//api/webhooks/payme" callback URLs.
+// ─────────────────────────────────────────────────────────────────────
+//  Shared helper — calls PayMe `/api/generate-sale`
+// ─────────────────────────────────────────────────────────────────────
+async function callGenerateSale(
+  input: CallGenerateSaleInput,
+): Promise<PaymeSaleResult> {
   const rawSiteUrl =
     process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
   const siteUrl = rawSiteUrl.trim().replace(/\/+$/, "");
 
-  // TEMP DEBUG: expose *which* variable is missing and what the API URL looks like
-  // so we can diagnose misconfig on Vercel. Remove once payments are stable.
-  const missing: string[] = [];
-  if (!sellerUid) missing.push("PAYME_SELLER_UID");
-  if (!apiUrl) missing.push("PAYME_API_URL");
-  if (!siteUrl) missing.push("NEXT_PUBLIC_SITE_URL");
-
-  // Even when all three are "present", the URL may be malformed (e.g., a token
-  // pasted into PAYME_API_URL). Validate it's actually an http(s) URL.
-  const apiUrlLooksValid = !!apiUrl && /^https?:\/\//i.test(apiUrl);
-  if (apiUrl && !apiUrlLooksValid) {
-    missing.push(`PAYME_API_URL (invalid: "${apiUrl.slice(0, 40)}…")`);
+  if (!siteUrl) {
+    console.error("[payme/generate-sale] missing NEXT_PUBLIC_SITE_URL");
+    return { ok: false, error: "תצורת השרת חסרה (SITE_URL)" };
   }
 
-  if (missing.length > 0 || !sellerUid || !apiUrl || !siteUrl) {
-    console.error("[payme] env check failed:", {
-      PAYME_SELLER_UID: sellerUid ? `set (len=${sellerUid.length})` : "MISSING",
-      PAYME_API_URL: apiUrl
-        ? `set (${apiUrlLooksValid ? "valid URL" : "INVALID — not http(s)"}: ${apiUrl.slice(0, 60)})`
-        : "MISSING",
-      NEXT_PUBLIC_SITE_URL: siteUrl ? `set (${siteUrl})` : "MISSING",
+  if (input.transactionId.length > PAYME_TXN_ID_MAX) {
+    console.error("[payme/generate-sale] transaction_id too long", {
+      length: input.transactionId.length,
     });
     return {
       ok: false,
-      error: `[debug] חסרים/לא תקינים: ${missing.join(", ")}`,
+      error: `transaction_id exceeds ${PAYME_TXN_ID_MAX} chars`,
     };
   }
 
-  // PayMe expects the price in agurot (ILS cents).
+  // PayMe expects price in agurot (ILS cents). Round to integer cents.
   const salePriceAgurot = Math.round(input.amountIls * 100);
 
-  // Detect which PayMe environment we're hitting (helps diagnose seller-id mismatch).
-  // Verified base URLs from payme.stoplight.io Direct API dashboard:
-  //   Staging:    https://sandbox.payme.io/api/
-  //   Production: https://live.payme.io/api/
-  const isSandbox = /sandbox\./i.test(apiUrl);
-  const isProduction = /live\./i.test(apiUrl);
-  const envLabel = isSandbox ? "SANDBOX" : isProduction ? "PRODUCTION" : "UNKNOWN";
-
-  // PayMe /api/generate-sale required fields:
-  //   seller_payme_id, sale_price (in agurot), currency, product_name
-  // Docs: https://docs.payme.io/docs/payments/86407fa137745-hosted-payment-page
-  const body: Record<string, unknown> = {
-    seller_payme_id: sellerUid,
+  const body = {
+    seller_payme_id: PAYME_SELLER_UID,
     sale_price: salePriceAgurot,
     currency: "ILS",
     product_name: input.productName,
+    sale_payment_method: "multi",
     sale_return_url: `${siteUrl}${input.returnPath}`,
     sale_callback_url: `${siteUrl}/api/webhooks/payme`,
     sale_back_url: `${siteUrl}${input.cancelPath}`,
-    // Buyer info at top-level (PayMe uses snake_case `buyer_*`).
+    transaction_id: input.transactionId,
     ...(input.userEmail ? { buyer_email: input.userEmail } : {}),
     ...(input.userName ? { buyer_name: input.userName } : {}),
-    custom_1: input.customRef,
-    custom_2: input.userId,
-    custom_3: input.extraCustom,
   };
 
-  // Verbose outbound logging — dev only. Production logs stay clean; the
-  // higher-level `[payme-webhook]` + `[payments]` logs cover the decision
-  // points needed for incident response.
-  if (process.env.NODE_ENV === "development") {
-    console.log("[payme-debug] request:", {
-      env: envLabel,
-      apiUrl,
-      sellerUidMasked: sellerUid.slice(0, 4) + "…" + sellerUid.slice(-2),
-      sale_price: salePriceAgurot,
-      product_name: input.productName,
-      sale_callback_url: body.sale_callback_url,
-      sale_return_url: body.sale_return_url,
-      custom_1: input.customRef,
-    });
-  }
+  console.log("[payme/generate-sale] request", {
+    apiUrl: PAYME_API_URL,
+    sellerUidPrefix: PAYME_SELLER_UID.slice(0, 8) + "…",
+    transactionId: input.transactionId,
+    amountAgurot: salePriceAgurot,
+    productName: input.productName,
+    sale_callback_url: body.sale_callback_url,
+    sale_return_url: body.sale_return_url,
+  });
 
-  let paymeResponse: PaymeGenerateSaleResponse;
+  let response: Response;
   try {
-    const res = await fetch(apiUrl, {
+    response = await fetch(PAYME_API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
-
-    const text = await res.text();
-    if (process.env.NODE_ENV === "development") {
-      console.log("[payme-debug] full response:", { httpStatus: res.status, body: text });
-    }
-
-    try {
-      paymeResponse = JSON.parse(text);
-    } catch {
-      console.error("[payme] non-JSON response:", res.status, text.slice(0, 300));
-      return {
-        ok: false,
-        error: `PayMe החזיר תגובה לא תקינה (HTTP ${res.status}): ${text.slice(0, 120)}`,
-      };
-    }
-
-    if (!res.ok) {
-      console.error("[payme] HTTP error:", res.status, paymeResponse);
-      return {
-        ok: false,
-        error: `[${envLabel}] ${
-          paymeResponse.status_error_details ||
-          `PayMe החזיר שגיאה (HTTP ${res.status})`
-        }`,
-      };
-    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[payme] fetch failed:", msg);
+    console.error("[payme/generate-sale] fetch failed:", msg);
     return { ok: false, error: `לא ניתן להתחבר לספק התשלום: ${msg}` };
   }
 
-  if (paymeResponse.status_code !== 0 && paymeResponse.status_error_code) {
-    console.error("[payme] sale failed:", paymeResponse);
+  const rawText = await response.text();
+  let parsed: PaymeGenerateSaleResponse;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    console.error("[payme/generate-sale] non-JSON response", {
+      httpStatus: response.status,
+      bodyPreview: rawText.slice(0, 300),
+    });
     return {
       ok: false,
-      error: `[${envLabel}] ${
-        paymeResponse.status_error_details ||
-        `PayMe error ${paymeResponse.status_error_code}`
-      }`,
+      error: `PayMe החזיר תגובה לא תקינה (HTTP ${response.status})`,
     };
   }
 
-  if (!paymeResponse.sale_url) {
-    console.error("[payme] no sale_url in response:", paymeResponse);
+  if (!response.ok) {
+    console.error("[payme/generate-sale] HTTP error", {
+      httpStatus: response.status,
+      parsed,
+    });
     return {
       ok: false,
       error:
-        paymeResponse.status_error_details ||
-        "PayMe לא החזיר קישור לדף תשלום",
+        parsed.status_error_details ||
+        `PayMe החזיר שגיאה (HTTP ${response.status})`,
     };
   }
 
-  return { ok: true, url: paymeResponse.sale_url };
+  if (parsed.status_code !== 0 && parsed.status_error_code) {
+    console.error("[payme/generate-sale] sale failed", parsed);
+    return {
+      ok: false,
+      error:
+        parsed.status_error_details ||
+        `PayMe error ${parsed.status_error_code}`,
+    };
+  }
+
+  if (!parsed.sale_url) {
+    console.error("[payme/generate-sale] no sale_url in response", parsed);
+    return {
+      ok: false,
+      error:
+        parsed.status_error_details || "PayMe לא החזיר קישור לדף תשלום",
+    };
+  }
+
+  console.log("[payme/generate-sale] OK", {
+    transactionId: input.transactionId,
+    saleUrlPreview: parsed.sale_url.slice(0, 60) + "…",
+  });
+
+  return { ok: true, url: parsed.sale_url };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 //  Workshop registration
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 
 export async function generatePaymeSaleForWorkshop(
   workshopId: string,
@@ -213,10 +224,8 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "הסדנה כבר התקיימה" };
   }
 
-  // ─── Atomic capacity check + registration upsert ───
-  // Must run inside a Serializable transaction so two users clicking
-  // "Register" for the last spot at the same time can't both succeed.
-  // Mirror of the BookingEngine.bookClass pattern for class seats.
+  // Atomic capacity check + registration upsert (Serializable so two
+  // simultaneous "register" clicks for the last seat can't both succeed).
   type RegistrationResult =
     | { kind: "already_completed" }
     | { kind: "full" }
@@ -237,31 +246,27 @@ export async function generatePaymeSaleForWorkshop(
           const count = await tx.workshopRegistration.count({
             where: { workshopId, paymentStatus: { not: "CANCELLED" } },
           });
-          // If the current user already has a PENDING row, it's included
-          // in the count — don't double-count them when deciding capacity.
-          const userCountsAsNewSeat = !(existing && existing.paymentStatus === "PENDING");
-          const effectiveCount = userCountsAsNewSeat ? count + 1 : count;
-          if (effectiveCount > workshop.maxCapacity) {
+          const userCountsAsNewSeat = !(
+            existing && existing.paymentStatus === "PENDING"
+          );
+          if (count + (userCountsAsNewSeat ? 1 : 0) > workshop.maxCapacity) {
             return { kind: "full" as const };
           }
         }
 
-        // Upsert: the unique (userId, workshopId) index guarantees dedup
-        // even under concurrent writes. Resets PENDING status if the user
-        // previously attempted and abandoned / cancelled.
         const registration = await tx.workshopRegistration.upsert({
           where: { userId_workshopId: { userId: user.id, workshopId } },
           create: { userId: user.id, workshopId, paymentStatus: "PENDING" },
           update: { paymentStatus: "PENDING" },
         });
-
-        return { kind: "ok" as const, registrationId: registration.id };
+        return {
+          kind: "ok" as const,
+          registrationId: registration.id,
+        };
       },
       { isolationLevel: "Serializable", timeout: 10_000 },
     );
   } catch (err) {
-    // Serializable isolation can throw on write conflicts — translate to
-    // a user-friendly "try again" rather than crashing.
     console.error("[payme-workshop] capacity tx error:", err);
     return { ok: false, error: "אירעה שגיאה, נסו שוב" };
   }
@@ -278,9 +283,7 @@ export async function generatePaymeSaleForWorkshop(
   return callGenerateSale({
     amountIls: workshop.price,
     productName: workshop.title,
-    customRef: `wsr:${registrationId}`,
-    userId: user.id,
-    extraCustom: workshop.id,
+    transactionId: registrationId, // ← same id we'll receive in the IPN
     userEmail: user.email,
     userName: user.name,
     returnPath: `/workshops?success=true&registration=${registrationId}`,
@@ -288,16 +291,11 @@ export async function generatePaymeSaleForWorkshop(
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 //  Credit / punch-card purchase
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 
-// Re-export from the centralized catalog so old importers continue to work
-// via `import { type CreditPurchaseType } from "@/actions/payme"`.
 export type { CreditPurchaseType } from "@/lib/product-catalog";
-
-import type { CreditPurchaseType } from "@/lib/product-catalog";
-import { productLabelFor } from "@/lib/product-catalog";
 
 const VALID_CREDIT_TYPES: CreditPurchaseType[] = [
   "SINGLE_CLASS",
@@ -306,10 +304,10 @@ const VALID_CREDIT_TYPES: CreditPurchaseType[] = [
 ];
 
 /**
- * @param type  SINGLE_CLASS (1 credit) | PUNCH_CARD_5 (5 credits) | PUNCH_CARD (10 credits)
- * @param bookClassInstanceId  optional — if provided, after successful
- *                             payment the user will be auto-booked into
- *                             this class instance on /payments/success
+ * @param type                 SINGLE_CLASS | PUNCH_CARD_5 | PUNCH_CARD
+ * @param bookClassInstanceId  Optional — if provided, /payments/success
+ *                             auto-books the user into this class instance
+ *                             after the IPN confirms the payment.
  */
 export async function generatePaymeSaleForCredits(
   type: CreditPurchaseType,
@@ -324,7 +322,7 @@ export async function generatePaymeSaleForCredits(
     return { ok: false, error: "יש להתחבר כדי לרכוש" };
   }
 
-  // Dynamic prices from admin settings — fallback to sane defaults.
+  // Pricing from admin settings; fall back to sane defaults on error.
   let creditPrice = 50;
   let punchCard5Price = 200;
   let punchCardPrice = 350;
@@ -354,40 +352,35 @@ export async function generatePaymeSaleForCredits(
   const amountIls = priceByType[type];
   const productName = productLabelFor(type);
 
-  // Server-side dedup window: if the same user started a PENDING payment
-  // for the same type within the last 60 seconds, reuse that row instead
-  // of creating a new one. Together with the client-side useRef guard,
-  // this eliminates the "duplicate stuck Payment row" problem that can
-  // happen from rapid double-clicks, multi-tab checkout, or bot replay.
-  const DEDUP_WINDOW_MS = 60_000;
+  // ─── Server-side dedup ───
+  // If the same user started a PENDING payment for the same product
+  // within the last 60s, reuse that row (eliminates rapid double-clicks
+  // creating duplicate Payment rows). Otherwise create a new one.
   const recentPending = await db.payment.findFirst({
     where: {
       userId: user.id,
       type,
       status: "PENDING",
-      createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
+      createdAt: { gte: new Date(Date.now() - 60_000) },
     },
     orderBy: { createdAt: "desc" },
   });
 
+  // ─── Persist BEFORE calling PayMe ───
+  // The Payment row must exist with PENDING status before we generate
+  // the sale, because the IPN can race the redirect and find the row
+  // by transaction_id (= Payment.id).
   const payment =
     recentPending ??
     (await db.payment.create({
       data: {
         userId: user.id,
         type,
-        // amount is stored in agurot for consistency with our existing schema.
-        amount: amountIls * 100,
+        amount: amountIls * 100, // agurot
         status: "PENDING",
       },
     }));
 
-  // recentPending reuse is silent in production — no action needed beyond
-  // the DB dedup itself. Visible in development via the gated debug block
-  // below if a developer needs to confirm the flow.
-
-  // Append optional auto-book class id so /payments/success can register
-  // the user into the class after payment completes.
   const returnPath = bookClassInstanceId
     ? `/payments/success?payment=${payment.id}&book=${bookClassInstanceId}`
     : `/payments/success?payment=${payment.id}`;
@@ -395,9 +388,7 @@ export async function generatePaymeSaleForCredits(
   return callGenerateSale({
     amountIls,
     productName,
-    customRef: `pay:${payment.id}`,
-    userId: user.id,
-    extraCustom: type,
+    transactionId: payment.id, // ← exact Payment.id; the IPN will echo this
     userEmail: user.email,
     userName: user.name,
     returnPath,

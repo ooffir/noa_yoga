@@ -1,47 +1,65 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
+import { db } from "@/lib/db";
 import {
   completePaymentSuccess,
   completeWorkshopSuccess,
   failPayment,
   cancelWorkshop,
   refundPayment,
-  resolveCustomRef,
-  findRecentPendingPaymentByAmount,
-  isPaymeSuccess,
-  isPaymeFailure,
-  isPaymeRefund,
 } from "@/lib/payments";
 import { verifyPaymeSale } from "@/lib/payme-verify";
 
 /**
- * PayMe IPN (Instant Payment Notification) webhook.
+ * PayMe IPN (Instant Payment Notification) webhook — production-stable refactor.
  *
- * Dispatches on the `custom_1` prefix we set in generate-sale:
- *   - "wsr:<id>" → WorkshopRegistration
- *   - "pay:<id>" → Payment (credit / punch-card purchase)
+ * ──────────────────────────────────────────────────────────────────────
+ *  Dispatch model
+ * ──────────────────────────────────────────────────────────────────────
  *
- * Security (C4):
- *   Before trusting any "success" payload, we independently call PayMe's
- *   /api/get-sales to confirm the sale exists for OUR seller UID and is
- *   actually captured. This stops a forged POST with a bogus custom_1
- *   from minting credits. See src/lib/payme-verify.ts for the logic.
+ * Every successful sale carries a `transaction_id` field that we set
+ * during /api/generate-sale. It's our internal DB primary key — either
+ * a Payment.id or a WorkshopRegistration.id (both are UUIDs, no
+ * collisions). The webhook:
+ *   1. Parses the body (JSON or x-www-form-urlencoded).
+ *   2. Extracts `transaction_id`.
+ *   3. Looks it up in `payments` first; if not found, in `workshop_registrations`.
+ *   4. Verifies authenticity (MD5 if provided, else server-to-server API).
+ *   5. Dispatches success / failure / refund.
  *
- * Reliability:
- *   If our DB handler throws, we return HTTP 500 so PayMe retries the
- *   webhook (their schedule is forgiving: minutes → hours). Without this,
- *   transient DB errors would silently drop real payments.
+ * Idempotent by design: if the row is already in a terminal state
+ * (COMPLETED / REFUNDED / CANCELLED), we return 200 OK without touching
+ * the DB. PayMe can re-deliver the IPN any number of times safely.
  *
- * Refunds:
- *   When Noa issues a refund in the PayMe dashboard, PayMe sends a
- *   follow-up IPN with `sale_status: "refunded"`. We flip the stored
- *   Payment to REFUNDED and zero-out the associated PunchCard so the
- *   student can't book further classes with revoked credits.
+ * ──────────────────────────────────────────────────────────────────────
+ *  Verification
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ *   • If PayMe sends a signature (e.g. `payme_signature`) AND we have
+ *     `PAYME_SECRET_KEY` in env, we verify the MD5 ourselves — the
+ *     fastest and most authoritative check.
+ *   • Otherwise we fall back to a server-to-server call to PayMe's
+ *     /get-sales endpoint with the `payme_sale_code`. Confirms the sale
+ *     truly captured for OUR seller before crediting.
+ *
+ * ──────────────────────────────────────────────────────────────────────
+ *  HTTP semantics
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ *   200 → handled (or already terminal). PayMe stops retrying.
+ *   400 → IPN malformed (missing transaction_id). PayMe stops retrying.
+ *   401 → verification failed. We don't credit. PayMe stops retrying.
+ *   404 → transaction_id not found in DB. PayMe stops retrying.
+ *   500 → transient (DB/network). PayMe SHOULD retry.
  */
 
 export const dynamic = "force-dynamic";
 
 type PaymePayload = Record<string, string | undefined>;
 
+// ─────────────────────────────────────────────────────────────────────
+//  Body parsing
+// ─────────────────────────────────────────────────────────────────────
 async function parseBody(req: Request): Promise<PaymePayload> {
   const contentType = req.headers.get("content-type") || "";
 
@@ -58,6 +76,7 @@ async function parseBody(req: Request): Promise<PaymePayload> {
     }
   }
 
+  // application/x-www-form-urlencoded or multipart/form-data
   try {
     const form = await req.formData();
     const out: PaymePayload = {};
@@ -70,250 +89,333 @@ async function parseBody(req: Request): Promise<PaymePayload> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  Status detectors — multiple field-name variants observed in production
+// ─────────────────────────────────────────────────────────────────────
+function isSuccess(payload: PaymePayload): boolean {
+  const candidates = [
+    payload.payme_status,
+    payload.status,
+    payload.sale_status,
+    payload.transaction_status,
+    payload.payment_status,
+  ]
+    .filter((v): v is string => typeof v === "string" && v.length > 0)
+    .map((v) => v.toLowerCase());
+
+  return candidates.some((s) =>
+    [
+      "success",
+      "succeed",
+      "successful",
+      "captured",
+      "capture",
+      "paid",
+      "approved",
+      "completed",
+      "done",
+      "1",
+    ].includes(s),
+  );
+}
+
+function isFailure(payload: PaymePayload): boolean {
+  const status = (
+    payload.payme_status ||
+    payload.status ||
+    payload.sale_status ||
+    ""
+  ).toLowerCase();
+  return ["failed", "failure", "cancelled", "canceled", "error"].includes(
+    status,
+  );
+}
+
+function isRefund(payload: PaymePayload): boolean {
+  const status = (
+    payload.payme_sale_status ||
+    payload.sale_status ||
+    payload.payme_status ||
+    payload.status ||
+    ""
+  ).toLowerCase();
+  const type = (payload.type || payload.event || "").toLowerCase();
+  return status === "refunded" || status === "refund" || type === "refund";
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  MD5 signature verification (if PayMe sends it)
+// ─────────────────────────────────────────────────────────────────────
+type SignatureResult = "valid" | "invalid" | "skipped";
+
+/**
+ * Verify the IPN's MD5 signature against PAYME_SECRET_KEY.
+ *
+ * Returns:
+ *   - "valid"   — signature matched
+ *   - "invalid" — signature provided but didn't match (probably forged)
+ *   - "skipped" — no signature in payload OR no secret in env; caller
+ *                 should fall back to server-to-server API verification
+ *
+ * Signing convention (PayMe's documented format for HPP):
+ *   md5(payme_sale_code + sale_price + currency + secret_key)
+ *
+ * If your account uses a different signing string, adjust the assembly
+ * below. The function logs the components on a mismatch so you can
+ * diagnose in 30 seconds.
+ */
+function verifyMd5Signature(payload: PaymePayload): SignatureResult {
+  const provided =
+    payload.payme_signature || payload.signature || payload.md5_signature;
+  if (!provided) return "skipped";
+
+  const secret = process.env.PAYME_SECRET_KEY?.trim();
+  if (!secret) {
+    console.warn(
+      "[payme-webhook] IPN includes signature but PAYME_SECRET_KEY is not set — falling back to API verification",
+    );
+    return "skipped";
+  }
+
+  const saleCode =
+    payload.payme_sale_code ||
+    payload.sale_code ||
+    payload.payme_sale_id ||
+    payload.sale_id ||
+    "";
+  const salePrice = payload.sale_price || payload.amount || "";
+  const currency = payload.currency || "ILS";
+
+  const signingString = `${saleCode}${salePrice}${currency}${secret}`;
+  const expected = crypto
+    .createHash("md5")
+    .update(signingString)
+    .digest("hex");
+
+  const matches = provided.toLowerCase() === expected.toLowerCase();
+
+  if (!matches) {
+    console.error("[payme-webhook] MD5 mismatch", {
+      provided: provided.slice(0, 8) + "…",
+      expected: expected.slice(0, 8) + "…",
+      // Don't log the full secret or signing string in production.
+      saleCodePrefix: saleCode.slice(0, 8) + "…",
+      salePrice,
+      currency,
+    });
+  }
+
+  return matches ? "valid" : "invalid";
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Handler
+// ─────────────────────────────────────────────────────────────────────
+
 export async function POST(req: Request) {
   const payload = await parseBody(req);
+  const contentType = req.headers.get("content-type") || "";
 
-  const custom1 = payload.custom_1 || payload.customId1 || payload["custom.1"];
-  let resolved = resolveCustomRef(custom1);
+  // 1. Extract transaction_id (our DB primary key).
+  const transactionId =
+    payload.transaction_id || payload.transactionId;
 
-  // If we resolve via the IPN-amount-fallback path below, we've already
-  // accepted PayMe's IPN as authoritative for THIS request and we skip
-  // the redundant /get-sales verification (which is broken for accounts
-  // that strip custom_1 — those are exactly the accounts that hit this
-  // path). Set this flag from the fallback block.
-  let trustIpnAsAuthoritative = false;
+  if (!transactionId) {
+    console.error("[payme-webhook] missing transaction_id", {
+      contentType,
+      payloadKeys: Object.keys(payload),
+      payloadPreview: JSON.stringify(payload).slice(0, 400),
+    });
+    return NextResponse.json(
+      { error: "missing transaction_id" },
+      { status: 400 },
+    );
+  }
 
-  const claimedSuccess = isPaymeSuccess(payload);
-  const claimedFailure = isPaymeFailure(payload);
-  const claimedRefund = isPaymeRefund(payload);
+  console.log("[payme-webhook] received", {
+    contentType,
+    transactionId,
+    payloadKeys: Object.keys(payload),
+  });
+
+  const claimedSuccess = isSuccess(payload);
+  const claimedFailure = isFailure(payload);
+  const claimedRefund = isRefund(payload);
   const paymeSaleCode =
     payload.payme_sale_code ||
     payload.sale_code ||
     payload.payme_sale_id ||
     payload.sale_id;
 
-  // ─── Fallback: amount + timestamp matching when custom_1 is missing ───
-  //
-  // Some PayMe seller configurations don't echo `custom_1` in the IPN
-  // body, so `resolveCustomRef` returns null even though the payment is
-  // legitimate. Instead of giving up, we have TWO recovery strategies:
-  //
-  //   1. (Preferred) Use the IPN body's own price field to look up our
-  //      DB. The IPN webhook URL is the seller's secret — only PayMe
-  //      knows it from the dashboard config — so the price field in the
-  //      IPN body is trustworthy. No /get-sales round-trip needed.
-  //
-  //   2. (Backup) If the IPN didn't include a price, call /get-sales
-  //      with the payme_sale_code to fetch the captured amount, then
-  //      match against our DB by amount + recency.
-  //
-  // The two-strategy split matters because we've seen PayMe accounts
-  // where /get-sales returns 200 OK with empty sales (sandbox/live
-  // mismatch or seller-side config). Strategy 1 doesn't depend on
-  // /get-sales working at all.
-  //
-  // Both strategies require an EXACT amount match against a single
-  // PENDING payment in the last 10 min — refuse to guess on ambiguity.
-  if (!resolved) {
-    // TEMP DEBUG: dump the ENTIRE IPN payload so we can see exactly
-    // which fields PayMe is sending for this seller account. The
-    // payload doesn't contain card numbers (PayMe never sends those
-    // through IPN); it just has sale code, status, amount, and
-    // possibly buyer name/email. Safe to log in full while we
-    // diagnose the field-name mismatch. Trim back once payments
-    // are stable.
-    console.error("[payme-webhook] unrecognized custom_1 — FULL PAYLOAD DUMP:", {
-      custom1,
-      payloadKeys: Object.keys(payload),
-      fullPayload: payload,
+  // 2. Look up the entity in DB. Payment first, then WorkshopRegistration.
+  //    Both are UUIDs (different namespaces, no collisions possible).
+  const payment = await db.payment.findUnique({
+    where: { id: transactionId },
+    select: { id: true, status: true },
+  });
+
+  let workshopReg: { id: string; paymentStatus: string } | null = null;
+  if (!payment) {
+    workshopReg = await db.workshopRegistration.findUnique({
+      where: { id: transactionId },
+      select: { id: true, paymentStatus: true },
     });
+  }
 
-    // ── EMERGENCY TRUST mode ──
-    //
-    // Enter the trust path UNLESS the IPN explicitly claims failure or
-    // refund. We deliberately do NOT require a positive `claimedSuccess`
-    // here — many PayMe seller accounts send IPNs without any status
-    // field at all (a known quirk of older HPP integrations). If the
-    // webhook came in, has a price, and matches a unique PENDING
-    // payment, that's the most reliable signal we have.
-    //
-    // Security rationale:
-    //   - The /api/webhooks/payme URL is the seller's secret (only
-    //     configured in PayMe's dashboard). An attacker without that
-    //     URL cannot send IPNs at all.
-    //   - The amount must match an EXISTING PENDING Payment row created
-    //     by an authenticated user during the last 10 minutes.
-    //   - The match must be UNIQUE (refuse on 2+ candidates) — so even
-    //     if an attacker somehow learned the URL, they couldn't pick
-    //     which user's payment to complete without also knowing the
-    //     exact amount within the recency window.
-    if (!claimedFailure && !claimedRefund) {
-      // ── Strategy 1: trust the IPN's own price field ──
-      // Try every spelling PayMe has used for the captured amount.
-      const ipnPriceRaw =
-        payload.sale_price ||
-        payload.price ||
-        payload.amount ||
-        payload.transaction_amount ||
-        payload.payme_total_amount ||
-        payload.total_amount;
-      const ipnPriceAgurot = ipnPriceRaw ? Number(ipnPriceRaw) : NaN;
+  if (!payment && !workshopReg) {
+    console.error("[payme-webhook] transaction_id not found in DB", {
+      transactionId,
+    });
+    return NextResponse.json(
+      { error: "transaction not found" },
+      { status: 404 },
+    );
+  }
 
-      console.log("[payme-webhook] strategy_1_ipn_price", {
-        ipnPriceRaw,
-        ipnPriceAgurot,
+  // 3. Idempotency — if already terminal, return 200 immediately with
+  //    NO DB writes. PayMe can re-deliver the IPN any number of times
+  //    without side effects.
+  if (payment) {
+    if (payment.status === "COMPLETED" || payment.status === "REFUNDED") {
+      console.log("[payme-webhook] payment already terminal — idempotent OK", {
+        transactionId,
+        status: payment.status,
       });
-
-      if (Number.isFinite(ipnPriceAgurot) && ipnPriceAgurot > 0) {
-        const matched = await findRecentPendingPaymentByAmount({
-          amountAgurot: ipnPriceAgurot,
-          withinMinutes: 10,
-        });
-        if (matched) {
-          console.log("[payme-webhook] strategy_1_matched", {
-            paymentId: matched.id,
-            amountAgurot: ipnPriceAgurot,
-          });
-          resolved = { kind: "payment", id: matched.id };
-          // We trusted the IPN price + DB amount match — skip the
-          // redundant /get-sales verification (which we know fails on
-          // this seller account).
-          trustIpnAsAuthoritative = true;
-        } else {
-          console.error(
-            "[payme-webhook] strategy_1: no unique PENDING payment matched",
-            { amountAgurot: ipnPriceAgurot },
-          );
-        }
-      }
-
-      // ── Strategy 2: ask /get-sales for the captured amount ──
-      // Only runs if strategy 1 didn't resolve and we have a sale code.
-      if (!resolved && paymeSaleCode) {
-        console.log("[payme-webhook] strategy_2_attempting_get_sales");
-        const verification = await verifyPaymeSale(paymeSaleCode);
-        if (verification.ok) {
-          const matched = await findRecentPendingPaymentByAmount({
-            amountAgurot: verification.salePriceAgurot,
-            withinMinutes: 10,
-          });
-          if (matched) {
-            console.log("[payme-webhook] strategy_2_matched", {
-              paymentId: matched.id,
-              amountAgurot: verification.salePriceAgurot,
-            });
-            resolved = { kind: "payment", id: matched.id };
-            // /get-sales already confirmed the capture — skip verifying
-            // it again in the next block.
-            trustIpnAsAuthoritative = true;
-          } else {
-            console.error(
-              "[payme-webhook] strategy_2: no unique PENDING payment matched",
-              { amountAgurot: verification.salePriceAgurot },
-            );
-          }
-        } else {
-          console.error(
-            "[payme-webhook] strategy_2: sale verification failed",
-            verification,
-          );
-        }
-      }
+      return NextResponse.json({
+        ok: true,
+        status: payment.status,
+        idempotent: true,
+      });
     }
-
-    // If both strategies failed, give up gracefully.
-    if (!resolved) {
-      return NextResponse.json({ ok: true, note: "unrecognized custom_1" });
+  } else if (workshopReg) {
+    if (
+      workshopReg.paymentStatus === "COMPLETED" ||
+      workshopReg.paymentStatus === "CANCELLED"
+    ) {
+      console.log(
+        "[payme-webhook] workshop reg already terminal — idempotent OK",
+        { transactionId, status: workshopReg.paymentStatus },
+      );
+      return NextResponse.json({
+        ok: true,
+        status: workshopReg.paymentStatus,
+        idempotent: true,
+      });
     }
   }
 
-  // ─── Independent verification for SUCCESS claims ───
-  // If the IPN says "success", we re-check via PayMe's server-to-server
-  // API to defend against forgery. Failure / cancelled / refund claims
-  // are not lucrative to forge (they'd just cancel or revoke a user's
-  // access) so we skip that step for them.
-  //
-  // EXCEPTION: when we resolved this IPN via the amount-fallback path
-  // (`trustIpnAsAuthoritative === true`) we already trusted the IPN
-  // price field AND matched it to a unique PENDING payment in our DB.
-  // Skipping the second /get-sales call here unblocks accounts where
-  // /get-sales returns empty results (the exact scenario that forced us
-  // into the fallback in the first place).
-  let verifiedSuccess = trustIpnAsAuthoritative;
-  if (claimedSuccess && !claimedRefund && !trustIpnAsAuthoritative) {
-    if (!paymeSaleCode) {
-      // Success claim without a PayMe sale code is malformed — either a bug
-      // on PayMe's side or a forged request. Either way, reject loudly.
-      console.error("[payme-webhook] success claim missing payme_sale_code — rejecting");
-      return NextResponse.json(
-        { error: "missing payme_sale_code" },
-        { status: 400 },
-      );
-    }
+  // 4. Verify authenticity for SUCCESS claims (skip for failure/refund
+  //    — those are not lucrative to forge).
+  if (claimedSuccess && !claimedRefund) {
+    const md5Result = verifyMd5Signature(payload);
 
-    const verification = await verifyPaymeSale(paymeSaleCode);
-
-    if (verification.ok) {
-      verifiedSuccess = true;
-    } else if (
-      verification.reason === "network_error" ||
-      verification.reason === "missing_config"
-    ) {
-      // Genuinely transient (network blip / config missing) → 500 so
-      // PayMe retries. We don't include "api_error" here any more
-      // because we've seen accounts where /get-sales legitimately
-      // returns 200-OK-empty as a non-transient state.
-      console.error(
-        "[payme-webhook] verify transient failure, asking PayMe to retry:",
-        verification,
-      );
+    if (md5Result === "invalid") {
+      console.error("[payme-webhook] MD5 signature invalid — rejecting", {
+        transactionId,
+      });
       return NextResponse.json(
-        { error: "temporarily unable to verify, please retry" },
-        { status: 500 },
-      );
-    } else {
-      // not_successful / seller_mismatch / api_error / missing_sale_code →
-      // either a forged IPN or PayMe truly says "no captured sale here".
-      // Reject with 401 and do NOT grant credits.
-      console.error("[payme-webhook] verification rejected:", verification);
-      return NextResponse.json(
-        { error: "verification failed", reason: verification.reason },
+        { error: "invalid signature" },
         { status: 401 },
       );
     }
+
+    if (md5Result === "skipped") {
+      // Fall back to server-to-server API verification.
+      if (!paymeSaleCode) {
+        console.error(
+          "[payme-webhook] success claim missing both signature and sale code",
+          { transactionId },
+        );
+        return NextResponse.json(
+          { error: "no verifiable identifier" },
+          { status: 400 },
+        );
+      }
+
+      const apiResult = await verifyPaymeSale(paymeSaleCode);
+
+      if (!apiResult.ok) {
+        if (
+          apiResult.reason === "network_error" ||
+          apiResult.reason === "missing_config"
+        ) {
+          // Transient — let PayMe retry.
+          console.error(
+            "[payme-webhook] API verification transient failure",
+            apiResult,
+          );
+          return NextResponse.json(
+            { error: "transient verification failure" },
+            { status: 500 },
+          );
+        }
+
+        // Permanent — forged or capture didn't actually happen.
+        console.error("[payme-webhook] API verification rejected", {
+          transactionId,
+          apiResult,
+        });
+        return NextResponse.json(
+          { error: "verification failed", reason: apiResult.reason },
+          { status: 401 },
+        );
+      }
+
+      console.log("[payme-webhook] API verification OK", {
+        transactionId,
+        saleStatus: apiResult.saleStatus,
+      });
+    } else {
+      console.log("[payme-webhook] MD5 signature OK", { transactionId });
+    }
   }
 
-  // ─── Dispatch ───
-  // Any handler failure below returns 500 so PayMe will retry. Previous
-  // behavior (return 200 on error) silently dropped real payments — the
-  // admin rescue page was the only fix. We prefer the provider's own
-  // retry mechanism which is designed for exactly this case.
+  // 5. Dispatch. Any handler failure throws → caught below → 500 retry.
   try {
-    if (resolved.kind === "workshop") {
+    if (payment) {
       if (claimedRefund) {
-        // Workshop refunds: mark the registration cancelled. The actual
-        // card-side refund is done by Noa in the PayMe dashboard — this
-        // just keeps our DB in sync so the student's seat is released.
-        await cancelWorkshop(resolved.id);
-      } else if (verifiedSuccess) {
-        await completeWorkshopSuccess(resolved.id);
+        await refundPayment(transactionId);
+        console.log("[payme-webhook] payment refunded", { transactionId });
+      } else if (claimedSuccess) {
+        await completePaymentSuccess(transactionId, paymeSaleCode);
+        console.log("[payme-webhook] payment completed", { transactionId });
       } else if (claimedFailure) {
-        await cancelWorkshop(resolved.id);
+        await failPayment(transactionId);
+        console.log("[payme-webhook] payment marked failed", { transactionId });
+      } else {
+        // Ambiguous IPN (no positive or negative claim) — treat as no-op.
+        console.warn("[payme-webhook] payment IPN ambiguous, no-op", {
+          transactionId,
+          payloadKeys: Object.keys(payload),
+        });
       }
-    } else {
+    } else if (workshopReg) {
       if (claimedRefund) {
-        await refundPayment(resolved.id);
-      } else if (verifiedSuccess) {
-        await completePaymentSuccess(resolved.id, paymeSaleCode);
+        await cancelWorkshop(transactionId);
+        console.log("[payme-webhook] workshop refunded/cancelled", {
+          transactionId,
+        });
+      } else if (claimedSuccess) {
+        await completeWorkshopSuccess(transactionId);
+        console.log("[payme-webhook] workshop completed", { transactionId });
       } else if (claimedFailure) {
-        await failPayment(resolved.id);
+        await cancelWorkshop(transactionId);
+        console.log("[payme-webhook] workshop marked cancelled", {
+          transactionId,
+        });
+      } else {
+        console.warn("[payme-webhook] workshop IPN ambiguous, no-op", {
+          transactionId,
+        });
       }
     }
   } catch (err) {
-    // Let PayMe retry. Every handler here is idempotent so retries are safe.
-    console.error("[payme-webhook] handler failed — returning 500 for retry:", err);
+    console.error(
+      "[payme-webhook] handler error — returning 500 for retry:",
+      err,
+    );
     return NextResponse.json(
-      { error: "handler error — please retry" },
+      { error: "handler error" },
       { status: 500 },
     );
   }
@@ -321,7 +423,7 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
-// Some PayMe setups probe the URL with GET first — respond OK.
+// PayMe sometimes pings with GET to verify the URL is reachable.
 export async function GET() {
   return NextResponse.json({ ok: true, service: "payme-webhook" });
 }

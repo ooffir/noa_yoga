@@ -134,51 +134,6 @@ export async function completePaymentSuccess(
   return { kind: "completed", paymentId, credits };
 }
 
-/**
- * Find a single PENDING Payment row matching the given amount that was
- * created within the last N minutes. Used as a fallback by the IPN
- * webhook when PayMe doesn't echo `custom_1` in the body — we still
- * have the captured amount, so we can usually identify the right row.
- *
- * Returns:
- *   - the unique matching Payment if exactly one is found
- *   - null if zero or 2+ matches (refuse to guess on ambiguity)
- */
-export async function findRecentPendingPaymentByAmount(params: {
-  amountAgurot: number;
-  withinMinutes?: number;
-}): Promise<{ id: string; userId: string; type: string } | null> {
-  const withinMinutes = params.withinMinutes ?? 10;
-  const since = new Date(Date.now() - withinMinutes * 60 * 1000);
-
-  console.log("[payments] findByAmount:start", {
-    amountAgurot: params.amountAgurot,
-    withinMinutes,
-  });
-
-  const matches = await db.payment.findMany({
-    where: {
-      status: "PENDING",
-      amount: params.amountAgurot,
-      createdAt: { gte: since },
-    },
-    select: { id: true, userId: true, type: true },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-  });
-
-  console.log("[payments] findByAmount:result", { matchCount: matches.length });
-
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) return null;
-
-  console.error("[payments] findByAmount:ambiguous", {
-    matchCount: matches.length,
-    amountAgurot: params.amountAgurot,
-  });
-  return null;
-}
-
 export async function failPayment(paymentId: string): Promise<void> {
   const payment = await db.payment.findUnique({ where: { id: paymentId } });
   if (!payment || payment.status !== "PENDING") return;
@@ -308,111 +263,32 @@ export async function cancelWorkshop(registrationId: string): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  custom_1 dispatch helpers (shared between webhook and return-URL flow)
+//  Light status detector — kept here ONLY for the success page's URL-cancel
+//  flow. The webhook owns its own copies of these (with broader detection).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SaleKind = "workshop" | "payment";
-export interface ResolvedCustomRef {
-  kind: SaleKind;
-  id: string;
-}
-
-export function resolveCustomRef(custom1: string | null | undefined): ResolvedCustomRef | null {
-  if (!custom1) return null;
-  if (custom1.startsWith("wsr:")) return { kind: "workshop", id: custom1.slice(4) };
-  if (custom1.startsWith("pay:")) return { kind: "payment", id: custom1.slice(4) };
-  // Legacy raw-UUID workshop registrations (pre-prefix).
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(custom1)) {
-    return { kind: "workshop", id: custom1 };
-  }
-  return null;
-}
-
 /**
- * Accepts a raw PayMe payload (from webhook OR return-URL query params)
- * and returns whether PayMe reports this sale as successful.
+ * Detect a failure/cancellation claim in a URL/payload.
  *
- * Recognises every PayMe status-field variant we've encountered across
- * different seller accounts and API versions:
- *   - payme_status
- *   - status
- *   - sale_status
- *   - transaction_status
- *   - payment_status
+ * Used by /payments/success when the user is redirected back from PayMe
+ * via the `sale_back_url` (cancel button). We don't need a full status
+ * detector here — only enough to mark the Payment FAILED so the page
+ * doesn't sit on the spinner waiting for a webhook that won't come.
  *
- * And every "captured / paid / approved" spelling:
- *   - "success", "succeed", "successful"
- *   - "captured", "capture"
- *   - "paid", "approved", "completed", "done"
- *   - numeric "1"
- *
- * status_code "0" is the PayMe convention for "API call OK" — when
- * combined with a captured-status field it confirms the sale completed.
+ * The webhook handler has its own, more comprehensive copies of all
+ * status detection logic. They're independent because they serve
+ * different paths and don't share trust assumptions.
  */
-export function isPaymeSuccess(payload: Record<string, string | undefined>): boolean {
-  const candidates = [
-    payload.payme_status,
-    payload.status,
-    payload.sale_status,
-    payload.transaction_status,
-    payload.payment_status,
-  ]
-    .filter((v): v is string => typeof v === "string" && v.length > 0)
-    .map((v) => v.toLowerCase());
-
-  const matchesAny = candidates.some((s) =>
-    [
-      "success",
-      "succeed",
-      "successful",
-      "captured",
-      "capture",
-      "paid",
-      "approved",
-      "completed",
-      "done",
-      "1",
-    ].includes(s),
-  );
-
-  if (matchesAny) return true;
-
-  // status_code "0" alone isn't enough (it just means "API responded OK"),
-  // but if combined with ANY of our status candidates being non-failure,
-  // treat as success. Used by older PayMe webhook variants.
-  if (payload.status_code === "0" && candidates.length === 0) {
-    return true;
-  }
-
-  return false;
-}
-
-export function isPaymeFailure(payload: Record<string, string | undefined>): boolean {
-  const status = (payload.payme_status || payload.status || "").toLowerCase();
-  return (
-    status === "failed" ||
-    status === "failure" ||
-    status === "cancelled" ||
-    status === "canceled" ||
-    status === "error"
-  );
-}
-
-/**
- * Detect a refund callback from PayMe. PayMe uses (at least) these
- * spellings depending on endpoint/region:
- *   - payme_sale_status: "refunded"
- *   - sale_status:       "refunded"
- *   - type:              "refund"
- */
-export function isPaymeRefund(payload: Record<string, string | undefined>): boolean {
+export function isPaymeFailure(
+  payload: Record<string, string | undefined>,
+): boolean {
   const status = (
-    payload.payme_sale_status ||
-    payload.sale_status ||
     payload.payme_status ||
     payload.status ||
+    payload.sale_status ||
     ""
   ).toLowerCase();
-  const type = (payload.type || payload.event || "").toLowerCase();
-  return status === "refunded" || status === "refund" || type === "refund";
+  return ["failed", "failure", "cancelled", "canceled", "error"].includes(
+    status,
+  );
 }

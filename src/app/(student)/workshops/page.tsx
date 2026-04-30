@@ -6,16 +6,7 @@ import { he } from "date-fns/locale";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
-import {
-  completeWorkshopSuccess,
-  cancelWorkshop,
-  isPaymeSuccess,
-  isPaymeFailure,
-} from "@/lib/payments";
-import {
-  verifyPaymeSale,
-  verifyPaymeSaleByCustomRef,
-} from "@/lib/payme-verify";
+import { cancelWorkshop, isPaymeFailure } from "@/lib/payments";
 
 // Always read fresh payment state from the DB so the confirmation banner
 // reflects the webhook update immediately after redirect.
@@ -33,66 +24,26 @@ interface Props {
 export default async function WorkshopsPage({ searchParams }: Props) {
   const sp = await searchParams;
 
-  // ─── Self-healing on return URL ───
+  // ─── URL-based cancellation only ───
   //
-  // Two-phase resolution mirrors /payments/success:
-  //   1. URL-based fast path: if PayMe added `payme_sale_code` to the
-  //      return URL, verify it directly.
-  //   2. ACTIVE custom-ref lookup: if we still don't see COMPLETED in
-  //      the DB, ask PayMe via /api/get-sales filtered by
-  //      `custom_1=wsr:<registrationId>`. Resolves the page even when
-  //      the IPN webhook is delayed or the URL has no sale code.
+  // The IPN webhook is the SOLE writer that flips a registration to
+  // COMPLETED — using PayMe's `transaction_id` field (which equals our
+  // WorkshopRegistration.id). This page just reads DB state.
   //
-  // Forge prevention (C4): every "success" path runs through PayMe's
-  // server-to-server verification. A malicious URL like
-  // `?registration=<x>&payme_status=success` cannot fake a paid state.
+  // Exception: if the user clicked "cancel" inside PayMe and was
+  // redirected back via `sale_back_url`, we mark the registration
+  // CANCELLED so the user doesn't sit on a "pending" banner waiting
+  // for an IPN that won't come.
   if (sp.registration) {
     try {
-      const urlSaleCode = sp.payme_sale_code || sp.sale_code || null;
-      const claimedSuccess = isPaymeSuccess({
-        payme_status: sp.payme_status,
-        status: sp.status,
-        status_code: sp.status_code,
-      });
-
-      // Phase 1 — URL fast path
-      if (claimedSuccess && urlSaleCode) {
-        const verification = await verifyPaymeSale(urlSaleCode);
-        if (verification.ok) {
-          await completeWorkshopSuccess(sp.registration);
-        } else {
-          console.error(
-            "[workshops] URL success claim failed verification:",
-            verification,
-          );
-        }
-      } else if (
+      if (
         sp.cancelled === "true" ||
         isPaymeFailure({ payme_status: sp.payme_status, status: sp.status })
       ) {
         await cancelWorkshop(sp.registration);
       }
-
-      // Phase 2 — Active custom-ref lookup (covers the "no sale code in
-      // URL" case, which is most return-URL configurations).
-      const reg = await prisma.workshopRegistration.findUnique({
-        where: { id: sp.registration },
-        select: { paymentStatus: true },
-      });
-      if (reg && reg.paymentStatus === "PENDING") {
-        const lookup = await verifyPaymeSaleByCustomRef(`wsr:${sp.registration}`);
-        if (lookup.ok && lookup.isCaptured) {
-          await completeWorkshopSuccess(sp.registration);
-        } else if (
-          lookup.ok === false &&
-          lookup.reason !== "no_sales_found" &&
-          lookup.reason !== "network_error"
-        ) {
-          console.error("[workshops] custom-ref lookup rejected:", lookup);
-        }
-      }
     } catch (err) {
-      console.error("[workshops] self-heal error:", err);
+      console.error("[workshops] cancel handling error:", err);
     }
   }
 

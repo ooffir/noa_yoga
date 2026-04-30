@@ -1,0 +1,27 @@
+# PLACEHOLDER — replace this entire file's contents with the verification
+# string PayMe (or Apple) provides for Apple Pay domain verification.
+#
+# Steps to obtain the real content:
+#   1. In PayMe's merchant dashboard, navigate to:
+#        Settings → Payment Methods → Apple Pay → "Domain Verification"
+#      (or contact PayMe support if you don't see it).
+#   2. They'll either give you the file content directly OR ask you to
+#      register your domain (noa-yoga.vercel.app — and any custom
+#      domain you map later) with their Apple Pay merchant identifier.
+#   3. Replace this entire file with the literal text they provide.
+#      It will be a base64-ish blob, ~300-1000 chars, no surrounding
+#      whitespace.
+#   4. Redeploy. The file becomes accessible at:
+#        https://noa-yoga.vercel.app/.well-known/apple-developer-merchantid-domain-association
+#   5. Apple will fetch this file periodically to confirm domain
+#      ownership. Without it, the Apple Pay button will not render
+#      on Safari/iOS even when "multi" is enabled in /generate-sale.
+#
+# Important serving notes:
+#   - The URL must respond with HTTP 200 and Content-Type that's NOT
+#     forced to application/octet-stream. Vercel serves files from
+#     /public as static assets with text/plain by default — that's fine.
+#   - Do NOT add any headers / redirects on /.well-known/ in middleware
+#     or vercel.json. The file must be reachable without auth.
+#   - You can verify after deploy with:
+#       curl -I https://noa-yoga.vercel.app/.well-known/apple-developer-merchantid-domain-association
