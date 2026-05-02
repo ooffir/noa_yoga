@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
+import { dbErrorResponse } from "@/lib/db-errors";
 
 export async function GET() {
   try {
@@ -16,8 +17,10 @@ export async function GET() {
     });
 
     return NextResponse.json(workshops);
-  } catch {
-    return NextResponse.json({ error: "שגיאה" }, { status: 500 });
+  } catch (err) {
+    console.error("[admin/workshops GET] failed:", err);
+    const { message, status } = dbErrorResponse(err, "שגיאה");
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -28,10 +31,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { title, description, date, price, imageUrl, maxCapacity } = await req.json();
+    const { title, description, date, price, imageUrl, maxCapacity } =
+      await req.json();
 
     if (!title || !description || !date || price == null) {
-      return NextResponse.json({ error: "כל השדות נדרשים" }, { status: 400 });
+      return NextResponse.json(
+        { error: "כל השדות נדרשים" },
+        { status: 400 },
+      );
     }
 
     const workshop = await db.workshop.create({
@@ -47,7 +54,9 @@ export async function POST(req: Request) {
 
     revalidatePath("/workshops");
     return NextResponse.json(workshop, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: "יצירת סדנה נכשלה" }, { status: 500 });
+  } catch (err) {
+    console.error("[admin/workshops POST] failed:", err);
+    const { message, status } = dbErrorResponse(err, "יצירת סדנה נכשלה");
+    return NextResponse.json({ error: message }, { status });
   }
 }

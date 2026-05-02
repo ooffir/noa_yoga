@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
+import { dbErrorResponse } from "@/lib/db-errors";
 import {
   sendTransactionalEmail,
   workshopCancellationEmail,
@@ -34,8 +35,10 @@ export async function PUT(
 
     revalidatePath("/workshops");
     return NextResponse.json(workshop);
-  } catch {
-    return NextResponse.json({ error: "עדכון נכשל" }, { status: 500 });
+  } catch (err) {
+    console.error("[admin/workshops PUT] failed:", err);
+    const { message, status } = dbErrorResponse(err, "עדכון נכשל");
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -146,6 +149,7 @@ export async function DELETE(
     });
   } catch (err) {
     console.error("[admin/workshops DELETE] failed:", err);
-    return NextResponse.json({ error: "מחיקה נכשלה" }, { status: 500 });
+    const { message, status } = dbErrorResponse(err, "מחיקה נכשלה");
+    return NextResponse.json({ error: message }, { status });
   }
 }
