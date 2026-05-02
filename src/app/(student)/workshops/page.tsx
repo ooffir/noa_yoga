@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import Image from "next/image";
+import type { Metadata } from "next";
 import { Sparkles, CalendarDays, Clock, CheckCircle2, XCircle, Clock3 } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
@@ -12,6 +13,22 @@ import { cancelWorkshop, isPaymeFailure } from "@/lib/payments";
 // reflects the webhook update immediately after redirect.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+export const metadata: Metadata = {
+  title: "סדנאות יוגה בחיפה — Noa Yogis",
+  description:
+    "סדנאות יוגה ייעודיות בחיפה אצל נועה אופיר. נשימה, מודעות, יוגה לנשים, וסדנאות חוויה ייחודיות. הרשמה אונליין מהירה.",
+  keywords: ["סדנאות יוגה", "סדנת יוגה חיפה", "סדנאות נשימה", "יוגה בחיפה"],
+  alternates: { canonical: "/workshops" },
+  openGraph: {
+    title: "סדנאות יוגה בחיפה | Noa Yogis",
+    description:
+      "סדנאות יוגה ייעודיות — נשימה, מודעות וחוויות מעבר לתרגול היומיומי.",
+    url: "/workshops",
+    type: "website",
+    images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "סדנאות יוגה" }],
+  },
+};
 
 type WorkshopRow = Awaited<ReturnType<typeof prisma.workshop.findMany>>[number] & {
   _count: { registrations: number };

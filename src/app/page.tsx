@@ -37,14 +37,23 @@ export const revalidate = 0;
 // Per-page metadata — overrides the root layout defaults. Shows up in
 // browser tabs, Google search results, and WhatsApp / Facebook link previews.
 export const metadata: Metadata = {
-  title: "Noa Yogis | סטודיו יוגה של נועה אופיר",
+  title: "יוגה בחיפה — סטודיו Noa Yogis בהנחיית נועה אופיר",
   description:
-    "סטודיו יוגה בחיפה בהנחיית נועה אופיר — שיעורי Vinyasa ו-Hatha, כרטיסיות חודשיות, סדנאות ותכני השראה. הרשמה אונליין בלחיצת כפתור.",
+    "סטודיו יוגה בחיפה בהנחיית נועה אופיר. שיעורי Vinyasa ו-Hatha, כרטיסיות חודשיות, סדנאות ייעודיות. הרשמה אונליין בלחיצה אחת — בואו לתרגל איתנו.",
+  keywords: [
+    "יוגה בחיפה",
+    "סטודיו יוגה חיפה",
+    "שיעורי יוגה בחיפה",
+    "יוגה לנשים חיפה",
+    "Vinyasa חיפה",
+    "סדנאות יוגה",
+    "נועה אופיר",
+  ],
   alternates: { canonical: "/" },
   openGraph: {
-    title: "Noa Yogis | סטודיו יוגה",
+    title: "יוגה בחיפה — Noa Yogis",
     description:
-      "שיעורי יוגה, כרטיסיות וסדנאות — כל התרגול שלך במקום אחד. הרשמה אונליין מהירה.",
+      "סטודיו יוגה בחיפה. שיעורי Vinyasa, Hatha, כרטיסיות וסדנאות — הרשמה אונליין מהירה.",
     url: "/",
     type: "website",
     images: [
@@ -52,7 +61,7 @@ export const metadata: Metadata = {
         url: "/yoga-pose.png",
         width: 1200,
         height: 630,
-        alt: "Noa Yogis — סטודיו יוגה",
+        alt: "Noa Yogis — סטודיו יוגה בחיפה",
       },
     ],
   },

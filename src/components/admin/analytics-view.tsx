@@ -110,7 +110,9 @@ export function AnalyticsView() {
         end: endDate,
       });
       if (classTitle) params.set("classTitle", classTitle);
-      const res = await fetch(`/api/admin/analytics?${params.toString()}`);
+      const res = await fetch(`/api/admin/analytics?${params.toString()}`, {
+        cache: "no-store",
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);

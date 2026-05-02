@@ -5,7 +5,7 @@ import { format, addWeeks, startOfWeek } from "date-fns";
 import { he } from "date-fns/locale";
 import {
   ChevronLeft, ChevronRight, Plus, Users, Clock, Trash2, MapPin,
-  Pencil, X, RotateCcw, CalendarDays,
+  Pencil, X, RotateCcw, CalendarDays, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +66,6 @@ interface FormState {
   maxCapacity: number;
   location: string;
   date: string;
-  isRecurring: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -78,11 +77,15 @@ const EMPTY_FORM: FormState = {
   maxCapacity: 15,
   location: "",
   date: getDefaultDate(),
-  isRecurring: true,
 };
 
 export function ScheduleBuilder() {
   const [weekOffset, setWeekOffset] = useState(0);
+  // Top-level tab — "upcoming" shows current week + future, "history"
+  // shows past weeks. The week navigation arrows still work in both
+  // modes; this just changes what gets rendered from the same data.
+  // No DB writes happen on tab change — pure client-side filtering.
+  const [view, setView] = useState<"upcoming" | "history">("upcoming");
   const [classes, setClasses] = useState<AdminClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -121,6 +124,10 @@ export function ScheduleBuilder() {
     const dayOfWeek = getDayOfWeekFromDate(form.date);
 
     try {
+      // Always create a single-instance class. The recurring-class flow
+      // has been removed — admin must create each class instance one
+      // at a time. Existing recurring classes in the DB are preserved
+      // and continue to function.
       const res = await fetch("/api/admin/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -134,7 +141,7 @@ export function ScheduleBuilder() {
           maxCapacity: Number(form.maxCapacity),
           location: form.location || undefined,
           date: form.date,
-          isRecurring: form.isRecurring,
+          isRecurring: false,
         }),
       });
 
@@ -144,7 +151,7 @@ export function ScheduleBuilder() {
         return;
       }
 
-      toast.success(form.isRecurring ? "שיעור קבוע נוצר (12 שבועות)" : "שיעור חד-פעמי נוצר");
+      toast.success("השיעור נוצר");
       setShowCreate(false);
       setForm({ ...EMPTY_FORM });
       fetchSchedule();
@@ -166,7 +173,6 @@ export function ScheduleBuilder() {
       maxCapacity: cls.maxCapacity,
       location: cls.location || "",
       date: format(new Date(cls.date), "yyyy-MM-dd"),
-      isRecurring: cls.isRecurring,
     });
     setShowEdit(true);
   };
@@ -243,19 +249,66 @@ export function ScheduleBuilder() {
     }
   };
 
-  const grouped = classes.reduce<Record<string, AdminClass[]>>((acc, cls) => {
-    const day = format(new Date(cls.date), "yyyy-MM-dd");
-    if (!acc[day]) acc[day] = [];
-    acc[day].push(cls);
-    return acc;
-  }, {});
+  // ── Filter + group classes for the current tab ──
+  // The API returns one week's worth of classes; we partition them by
+  // "is the class start time before now?". Grouping happens AFTER
+  // filtering so empty days don't render headers. Pure client-side
+  // logic — NO database queries or deletions.
+  const now = Date.now();
+  const filteredClasses = classes.filter((cls) => {
+    const [hh, mm] = cls.startTime.split(":").map(Number);
+    const dt = new Date(cls.date);
+    dt.setHours(hh, mm, 0, 0);
+    const isPast = dt.getTime() < now;
+    return view === "history" ? isPast : !isPast;
+  });
 
-  const recurringLabel = form.date
-    ? DAYS_HE[getDayOfWeekFromDate(form.date)] || ""
-    : "";
+  const grouped = filteredClasses.reduce<Record<string, AdminClass[]>>(
+    (acc, cls) => {
+      const day = format(new Date(cls.date), "yyyy-MM-dd");
+      if (!acc[day]) acc[day] = [];
+      acc[day].push(cls);
+      return acc;
+    },
+    {},
+  );
 
   return (
     <div>
+      {/* ── Top-level tabs: Upcoming vs History ── */}
+      <div
+        role="tablist"
+        aria-label="תצוגת שיעורים"
+        className="mb-5 flex items-center gap-1 rounded-3xl border border-sage-100 bg-white p-1"
+      >
+        <button
+          role="tab"
+          aria-selected={view === "upcoming"}
+          onClick={() => setView("upcoming")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium transition-colors ${
+            view === "upcoming"
+              ? "bg-sage-600 text-white shadow-sm"
+              : "bg-transparent text-sage-600 hover:bg-sage-50"
+          }`}
+        >
+          <CalendarDays className="h-4 w-4" />
+          שיעורים קרובים
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "history"}
+          onClick={() => setView("history")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium transition-colors ${
+            view === "history"
+              ? "bg-sage-600 text-white shadow-sm"
+              : "bg-transparent text-sage-600 hover:bg-sage-50"
+          }`}
+        >
+          <History className="h-4 w-4" />
+          היסטוריית שיעורים
+        </button>
+      </div>
+
       {/* ── כותרת + ניווט ── */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
@@ -269,24 +322,35 @@ export function ScheduleBuilder() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
         </div>
-        <Button
-          onClick={() => { setForm({ ...EMPTY_FORM }); setShowCreate(true); }}
-          className="rounded-2xl"
-        >
-          <Plus className="h-4 w-4 ml-2" />
-          שיעור חדש
-        </Button>
+        {/* Hide "create" in history view — nobody creates a class in the past */}
+        {view === "upcoming" && (
+          <Button
+            onClick={() => { setForm({ ...EMPTY_FORM }); setShowCreate(true); }}
+            className="rounded-2xl"
+          >
+            <Plus className="h-4 w-4 ml-2" />
+            שיעור חדש
+          </Button>
+        )}
       </div>
 
-      {/* ── רשימת שיעורים ── */}
+      {/* ── רשימת שיעורים (filtered by tab) ── */}
       {loading ? (
         <PageLoader />
-      ) : classes.length === 0 ? (
+      ) : filteredClasses.length === 0 ? (
         <Card className="rounded-3xl">
           <CardContent className="py-16 text-center">
             <CalendarDays className="h-10 w-10 text-sage-200 mx-auto mb-4" />
-            <p className="text-sage-500 text-lg font-medium">אין שיעורים בשבוע זה</p>
-            <p className="text-sage-400 text-sm mt-1">לחצו על ״שיעור חדש״ כדי להתחיל</p>
+            <p className="text-sage-500 text-lg font-medium">
+              {view === "history"
+                ? "אין שיעורים שהתקיימו בשבוע זה"
+                : "אין שיעורים קרובים בשבוע זה"}
+            </p>
+            <p className="text-sage-400 text-sm mt-1">
+              {view === "history"
+                ? "ניתן לדפדף לשבועות אחרים בעזרת החצים"
+                : "לחצו על ״שיעור חדש״ כדי להתחיל"}
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -351,7 +415,14 @@ export function ScheduleBuilder() {
                           )}
                         </div>
 
-                        {!cls.isCancelled && (
+                        {/*
+                         * Edit/cancel/disable actions are only available in
+                         * the upcoming tab. History tab is read-only — past
+                         * classes shouldn't be modified, and triggering
+                         * "cancel" on them would fire the refund cascade
+                         * on students who already attended.
+                         */}
+                        {!cls.isCancelled && view === "upcoming" && (
                           <div className="flex items-center gap-1 shrink-0">
                             <Button
                               variant="ghost" size="icon"
@@ -397,7 +468,7 @@ export function ScheduleBuilder() {
           <DialogHeader>
             <DialogTitle>יצירת שיעור חדש</DialogTitle>
             <DialogDescription>
-              בחרו תאריך, וסמנו אם זה שיעור קבוע שבועי.
+              בחרו את תאריך, השעה ופרטי השיעור.
             </DialogDescription>
           </DialogHeader>
 
@@ -429,23 +500,6 @@ export function ScheduleBuilder() {
                 required
               />
             </div>
-
-            <label className="flex items-center gap-3 cursor-pointer rounded-2xl border border-sage-200 bg-sage-50/50 px-4 py-3">
-              <input
-                type="checkbox"
-                checked={form.isRecurring}
-                onChange={(e) => updateField("isRecurring", e.target.checked)}
-                className="h-5 w-5 rounded border-sage-300 text-sage-600 focus:ring-sage-500 accent-sage-600"
-              />
-              <div>
-                <span className="text-sm font-medium text-sage-800">שיעור קבוע בכל שבוע</span>
-                <p className="text-xs text-sage-500 mt-0.5">
-                  {form.isRecurring
-                    ? `ייווצרו 12 מופעים לכל יום ${recurringLabel}`
-                    : "שיעור חד-פעמי בתאריך שנבחר"}
-                </p>
-              </div>
-            </label>
 
             <div className="grid grid-cols-2 gap-3">
               <div>

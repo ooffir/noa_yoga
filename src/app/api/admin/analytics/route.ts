@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { getDbUser } from "@/lib/get-db-user";
 import { fetchAnalytics } from "@/lib/analytics";
 
 /**
@@ -10,18 +10,58 @@ import { fetchAnalytics } from "@/lib/analytics";
  * evaluated in PostgreSQL (not Node) so the endpoint remains fast as
  * the DB grows.
  *
- * Auth: requireAdmin() — 401 for non-admins.
+ * Auth: explicit getDbUser() check — same pattern as /api/admin/dashboard.
+ *
+ *   • 401 = no Clerk session (the user isn't signed in OR the session
+ *           cookie didn't reach this route).
+ *   • 403 = signed in but role !== ADMIN.
+ *
+ * We deliberately do NOT use `requireAdmin()` from auth-helpers here
+ * because that helper calls `redirect()`, which is meant for server
+ * components / pages — in API routes it throws a synthetic redirect
+ * error that gets swallowed by a catch-all and surfaces as a confusing
+ * generic 401. The explicit check below returns precise status codes
+ * AND logs the reason, so future auth issues are easy to diagnose.
  */
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: Request) {
+  // ── Auth check ──
+  let dbUser;
   try {
-    await requireAdmin();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    dbUser = await getDbUser();
+  } catch (err) {
+    console.error("[analytics] getDbUser threw:", err);
+    return NextResponse.json(
+      { error: "auth resolution failed" },
+      { status: 500 },
+    );
   }
 
+  if (!dbUser) {
+    console.error(
+      "[analytics] no Clerk session — request had no auth context",
+    );
+    return NextResponse.json(
+      { error: "unauthorized — please sign in" },
+      { status: 401 },
+    );
+  }
+
+  if (dbUser.role !== "ADMIN") {
+    console.error("[analytics] user is not admin", {
+      userId: dbUser.id,
+      role: dbUser.role,
+    });
+    return NextResponse.json(
+      { error: "forbidden — admin role required" },
+      { status: 403 },
+    );
+  }
+
+  // ── Parameter parsing ──
   const { searchParams } = new URL(req.url);
   const startParam = searchParams.get("start");
   const endParam = searchParams.get("end");
@@ -45,6 +85,7 @@ export async function GET(req: Request) {
     );
   }
 
+  // ── Aggregations ──
   try {
     const payload = await fetchAnalytics({
       startDate,

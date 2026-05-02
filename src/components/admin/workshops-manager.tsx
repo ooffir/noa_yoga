@@ -5,11 +5,27 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PageLoader, Spinner } from "@/components/ui/loading";
-import { Plus, Pencil, Trash2, Upload, ImageIcon, Users } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Plus, Pencil, Trash2, Upload, ImageIcon, Users, Mail, Phone, CheckCircle2, Clock3, XCircle } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+
+interface Attendee {
+  id: string;
+  userId: string;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  paymentStatus: "PENDING" | "COMPLETED" | "CANCELLED";
+  registeredAt: string;
+}
+
+interface AttendeesPayload {
+  workshop: { id: string; title: string; date: string };
+  attendees: Attendee[];
+  summary: { total: number; paid: number; pending: number; cancelled: number };
+}
 
 interface Workshop {
   id: string;
@@ -42,6 +58,33 @@ export function WorkshopsManager() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Attendees dialog state — opened when admin clicks the registration count
+  const [attendeesWorkshopId, setAttendeesWorkshopId] = useState<string | null>(null);
+  const [attendeesData, setAttendeesData] = useState<AttendeesPayload | null>(null);
+  const [attendeesLoading, setAttendeesLoading] = useState(false);
+
+  const openAttendees = useCallback(async (workshopId: string) => {
+    setAttendeesWorkshopId(workshopId);
+    setAttendeesData(null);
+    setAttendeesLoading(true);
+    try {
+      const res = await fetch(`/api/admin/workshops/${workshopId}/attendees`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as AttendeesPayload;
+      setAttendeesData(data);
+    } catch (err) {
+      console.error("[workshops] attendees fetch failed:", err);
+      toast.error("טעינת רשימת המשתתפות נכשלה");
+    } finally {
+      setAttendeesLoading(false);
+    }
+  }, []);
 
   const fetchWorkshops = useCallback(async () => {
     try {
@@ -196,9 +239,24 @@ export function WorkshopsManager() {
                       <p className="text-xs text-sage-400">
                         {format(new Date(w.date), "d בMMMM yyyy · HH:mm", { locale: he })} · ₪{w.price}
                       </p>
-                      <p className="text-xs text-sage-400 flex items-center gap-1 mt-0.5">
-                        <Users className="h-3 w-3" /> {w._count.registrations} נרשמו
-                      </p>
+                      {/* Clickable attendee count → opens the attendees dialog.
+                          Only enabled when there are actually registrations,
+                          to avoid a useless "0 nothing to show" dialog. */}
+                      {w._count.registrations > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => openAttendees(w.id)}
+                          className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-sage-50 px-2 py-0.5 text-xs font-medium text-sage-700 hover:bg-sage-100 transition-colors"
+                          aria-label="צפייה ברשימת המשתתפות"
+                        >
+                          <Users className="h-3 w-3" />
+                          {w._count.registrations} נרשמו · צפייה
+                        </button>
+                      ) : (
+                        <p className="text-xs text-sage-400 flex items-center gap-1 mt-0.5">
+                          <Users className="h-3 w-3" /> 0 נרשמו
+                        </p>
+                      )}
                     </div>
                   </div>
                   {/*
@@ -283,6 +341,107 @@ export function WorkshopsManager() {
               {saving ? <Spinner className="h-4 w-4" /> : editId ? "שמירת שינויים" : "יצירת סדנה"}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ════ Attendees dialog — read-only list of registered users ════ */}
+      <Dialog
+        open={attendeesWorkshopId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAttendeesWorkshopId(null);
+            setAttendeesData(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>משתתפות בסדנה</DialogTitle>
+            <DialogDescription>
+              {attendeesData
+                ? `${attendeesData.workshop.title} · ${format(new Date(attendeesData.workshop.date), "d בMMMM yyyy · HH:mm", { locale: he })}`
+                : "טוען רשימה…"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {attendeesLoading || !attendeesData ? (
+            <div className="py-12 text-center">
+              <Spinner className="mx-auto h-6 w-6" />
+            </div>
+          ) : (
+            <div className="space-y-4 mt-2">
+              {/* Summary bar */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="rounded-2xl bg-sage-50/50 px-2 py-3">
+                  <p className="text-lg font-bold text-sage-900">{attendeesData.summary.total}</p>
+                  <p className="text-[10px] text-sage-500">סה״כ</p>
+                </div>
+                <div className="rounded-2xl bg-emerald-50/40 px-2 py-3">
+                  <p className="text-lg font-bold text-emerald-700">{attendeesData.summary.paid}</p>
+                  <p className="text-[10px] text-sage-500">שילמו</p>
+                </div>
+                <div className="rounded-2xl bg-amber-50/40 px-2 py-3">
+                  <p className="text-lg font-bold text-amber-700">{attendeesData.summary.pending}</p>
+                  <p className="text-[10px] text-sage-500">בהמתנה</p>
+                </div>
+                <div className="rounded-2xl bg-red-50/40 px-2 py-3">
+                  <p className="text-lg font-bold text-red-600">{attendeesData.summary.cancelled}</p>
+                  <p className="text-[10px] text-sage-500">בוטלו</p>
+                </div>
+              </div>
+
+              {attendeesData.attendees.length === 0 ? (
+                <p className="text-sm text-sage-400 text-center py-6">
+                  אין משתתפות עדיין.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {attendeesData.attendees.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-start justify-between gap-3 rounded-2xl border border-sage-100 px-4 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sage-900 text-sm truncate">
+                          {a.name || "ללא שם"}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-sage-500 mt-0.5">
+                          <span className="flex items-center gap-1">
+                            <Mail className="h-3 w-3" />
+                            <span dir="ltr">{a.email}</span>
+                          </span>
+                          {a.phone && (
+                            <span className="flex items-center gap-1">
+                              <Phone className="h-3 w-3" />
+                              <span dir="ltr">{a.phone}</span>
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-sage-400 mt-0.5">
+                          נרשמה {format(new Date(a.registeredAt), "d בMMMM yyyy · HH:mm", { locale: he })}
+                        </p>
+                      </div>
+                      <div className="shrink-0">
+                        {a.paymentStatus === "COMPLETED" ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                            <CheckCircle2 className="h-3 w-3" /> שולם
+                          </span>
+                        ) : a.paymentStatus === "PENDING" ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                            <Clock3 className="h-3 w-3" /> בהמתנה
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-600">
+                            <XCircle className="h-3 w-3" /> בוטל
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

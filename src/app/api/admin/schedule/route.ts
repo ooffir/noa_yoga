@@ -4,7 +4,6 @@ import { getDbUser } from "@/lib/get-db-user";
 import { db } from "@/lib/db";
 import {
   getAdminWeeklySchedule,
-  generateRecurringInstances,
   generateSingleInstance,
 } from "@/lib/schedule-service";
 import { classDefinitionSchema } from "@/lib/validations";
@@ -44,7 +43,13 @@ export async function POST(req: Request) {
     const body = await req.json();
     const data = classDefinitionSchema.parse(body);
 
-    const { date: dateStr, isRecurring, ...defData } = data;
+    // Recurring-class creation has been removed — every POST creates
+    // exactly ONE class instance. The `isRecurring` field is preserved
+    // on existing rows in the database (do not delete data) but new
+    // classes are always single-instance, so we hardcode `false` here
+    // regardless of what the client sent.
+    const { date: dateStr, isRecurring: _ignoredIsRecurring, ...defData } = data;
+    void _ignoredIsRecurring;
 
     if (!dateStr) {
       return NextResponse.json(
@@ -54,14 +59,14 @@ export async function POST(req: Request) {
     }
 
     const classDef = await db.classDefinition.create({
-      data: { ...defData, isRecurring: isRecurring ?? true },
+      data: { ...defData, isRecurring: false },
     });
 
-    if (isRecurring) {
-      await generateRecurringInstances(classDef.id, dateStr, 12);
-    } else {
-      await generateSingleInstance(classDef.id, dateStr);
-    }
+    // Single-instance creation only — no loop. Existing recurring
+    // classes (created before this change) keep their cron-driven
+    // weekly extension via /api/cron/generate-instances; new classes
+    // do NOT participate in that mechanism.
+    await generateSingleInstance(classDef.id, dateStr);
 
     revalidateTag("schedule", "max");
     revalidatePath("/schedule");

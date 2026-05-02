@@ -5,6 +5,7 @@ import {
   creditsForPaymentType,
   productLabelFor,
 } from "@/lib/product-catalog";
+import { generateInvoice } from "@/lib/ypay";
 
 /**
  * Payment completion helpers — shared by the PayMe webhook and the
@@ -111,12 +112,12 @@ export async function completePaymentSuccess(
     revalidatePath("/schedule");
   } catch {}
 
-  // Fire-and-forget transactional receipt. Always sent — bypasses the
-  // user's `receiveEmails` opt-out per consumer-law obligations.
+  // ── Side effect 1: Email receipt (transactional, bypasses opt-out) ──
+  const productLabel = productLabelFor(payment.type);
+  const amountIls = payment.amount / 100; // amount stored in agurot
+  const txId = paymeSaleCode ?? payment.paymentPageUid ?? payment.id;
+
   try {
-    const productLabel = productLabelFor(payment.type);
-    const amountIls = payment.amount / 100; // amount stored in agurot
-    const txId = paymeSaleCode ?? payment.paymentPageUid ?? payment.id;
     const { subject, html } = paymentReceiptEmail({
       name: payment.user.name || "תלמידה יקרה",
       productLabel,
@@ -130,6 +131,35 @@ export async function completePaymentSuccess(
   } catch (err) {
     console.error("[payments] receipt email build failed:", err);
   }
+
+  // ── Side effect 2: Ypay tax-receipt automation ──
+  // Fire-and-forget — failure here MUST NOT roll back the payment
+  // completion (the customer's card was already charged). All failure
+  // modes are logged; activate the real Ypay integration by setting
+  // YPAY_* env vars on Vercel (see src/lib/ypay.ts top-of-file docs).
+  generateInvoice({
+    internalRefId: paymentId,
+    paymeSaleCode: paymeSaleCode ?? null,
+    customerName: payment.user.name || "תלמידה יקרה",
+    customerEmail: payment.user.email,
+    productLabel,
+    amountIls,
+    transactionDate: new Date(),
+  })
+    .then((result) => {
+      if (result.ok) {
+        console.log("[payments] ypay invoice issued", {
+          paymentId,
+          invoiceNumber: result.invoiceNumber,
+        });
+      } else {
+        console.warn("[payments] ypay invoice not issued", {
+          paymentId,
+          reason: result.reason,
+        });
+      }
+    })
+    .catch((err) => console.error("[payments] ypay threw:", err));
 
   return { kind: "completed", paymentId, credits };
 }
@@ -234,11 +264,13 @@ export async function completeWorkshopSuccess(
     revalidatePath("/workshops");
   } catch {}
 
-  // Fire-and-forget transactional receipt (always sent, bypasses opt-out).
+  const workshopProductLabel = `סדנה: ${reg.workshop.title}`;
+
+  // ── Side effect 1: Email receipt (transactional, bypasses opt-out) ──
   try {
     const { subject, html } = paymentReceiptEmail({
       name: reg.user.name || "תלמידה יקרה",
-      productLabel: `סדנה: ${reg.workshop.title}`,
+      productLabel: workshopProductLabel,
       amountIls: reg.workshop.price,
       date: new Date(),
       transactionId: reg.id,
@@ -249,6 +281,32 @@ export async function completeWorkshopSuccess(
   } catch (err) {
     console.error("[payments] workshop receipt email build failed:", err);
   }
+
+  // ── Side effect 2: Ypay tax-receipt automation ──
+  // Fire-and-forget — never block the workshop completion on this.
+  generateInvoice({
+    internalRefId: reg.id,
+    paymeSaleCode: null, // workshops don't currently store the sale code
+    customerName: reg.user.name || "תלמידה יקרה",
+    customerEmail: reg.user.email,
+    productLabel: workshopProductLabel,
+    amountIls: reg.workshop.price,
+    transactionDate: new Date(),
+  })
+    .then((result) => {
+      if (result.ok) {
+        console.log("[payments] workshop ypay invoice issued", {
+          registrationId,
+          invoiceNumber: result.invoiceNumber,
+        });
+      } else {
+        console.warn("[payments] workshop ypay invoice not issued", {
+          registrationId,
+          reason: result.reason,
+        });
+      }
+    })
+    .catch((err) => console.error("[payments] workshop ypay threw:", err));
 
   return { kind: "completed", registrationId };
 }

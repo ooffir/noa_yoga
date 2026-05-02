@@ -12,17 +12,24 @@ import { toUTCDate } from "@/lib/utils";
 export const revalidate = 60;
 
 export const metadata: Metadata = {
-  title: "מערכת שעות",
+  title: "מערכת שעות יוגה בחיפה — שיעורים שבועיים",
   description:
-    "מערכת השעות השבועית של Noa Yogis — הרשמה אונליין לשיעורי יוגה, רשימת המתנה לשיעורים מלאים וביטול חינם בתוך חלון הזמן המוגדר.",
+    "לוח שיעורי יוגה בחיפה אצל נועה אופיר — הרשמה אונליין לשיעורי Vinyasa, Hatha ונשימה. רשימת המתנה לשיעורים מלאים וביטול חינם בתוך חלון הזמן המוגדר.",
+  keywords: [
+    "מערכת שעות יוגה",
+    "שיעורי יוגה בחיפה",
+    "לוח שיעורים יוגה",
+    "Vinyasa חיפה",
+    "Hatha חיפה",
+  ],
   alternates: { canonical: "/schedule" },
   openGraph: {
-    title: "מערכת שעות | Noa Yogis",
+    title: "מערכת שעות | יוגה בחיפה — Noa Yogis",
     description:
       "הזמינו מקום לשיעור הבא שלכם או הצטרפו לרשימת המתנה — הכל במקום אחד.",
     url: "/schedule",
     type: "website",
-    images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "מערכת שעות" }],
+    images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "מערכת שעות יוגה בחיפה" }],
   },
 };
 

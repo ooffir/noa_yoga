@@ -5,14 +5,15 @@ import type { Metadata } from "next";
 export const revalidate = 60;
 
 export const metadata: Metadata = {
-  title: "מחירון",
+  title: "מחירון יוגה בחיפה — שיעור בודד וכרטיסיות",
   description:
-    "מחירון Noa Yogis — שיעור בודד או כרטיסיית 10 שיעורים. תשלום מאובטח בפיימי, ביטול חינם בתוך חלון הזמן המוגדר.",
+    "מחירי שיעורי יוגה בחיפה אצל נועה אופיר. שיעור בודד, כרטיסיית 5 או 10 שיעורים, תשלום מאובטח בפיימי. ביטול חינם בתוך חלון הזמן.",
+  keywords: ["מחירון יוגה", "כרטיסיית יוגה", "יוגה בחיפה מחיר", "שיעור יוגה בודד"],
   alternates: { canonical: "/pricing" },
   openGraph: {
-    title: "מחירון | Noa Yogis",
+    title: "מחירון יוגה בחיפה | Noa Yogis",
     description:
-      "שיעור בודד או כרטיסייה משתלמת של 10 שיעורים — בחרו את המסלול שמתאים לתרגול שלכם.",
+      "שיעור בודד או כרטיסייה משתלמת של 5/10 שיעורים — בחרו את המסלול שמתאים לתרגול שלכם.",
     url: "/pricing",
     type: "website",
     images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "מחירון Noa Yogis" }],

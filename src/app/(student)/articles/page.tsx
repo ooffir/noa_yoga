@@ -1,9 +1,25 @@
 import { prisma } from "@/lib/prisma";
+import type { Metadata } from "next";
 import { Newspaper } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 
 export const revalidate = 60;
+
+export const metadata: Metadata = {
+  title: "מגזין יוגה — תכנים מעולם התרגול והמיינדפולנס",
+  description:
+    "כתבות, תובנות ותכנים מעולם היוגה והמיינדפולנס מבית Noa Yogis — סטודיו יוגה בחיפה. השראה, טכניקות נשימה והעמקה בתרגול.",
+  keywords: ["מגזין יוגה", "כתבות יוגה", "מיינדפולנס", "יוגה בחיפה", "השראה לתרגול"],
+  alternates: { canonical: "/articles" },
+  openGraph: {
+    title: "מגזין יוגה | Noa Yogis",
+    description: "כתבות, השראה ותוכן מעולם היוגה והמיינדפולנס.",
+    url: "/articles",
+    type: "website",
+    images: [{ url: "/yoga-pose.png", width: 1200, height: 630, alt: "מגזין יוגה Noa Yogis" }],
+  },
+};
 
 export default async function ArticlesPage() {
   let articles: { id: string; title: string; slug: string; imageUrl: string | null; createdAt: Date }[] = [];

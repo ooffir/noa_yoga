@@ -26,13 +26,19 @@ export function DashboardView() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/admin/dashboard")
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed");
+    fetch("/api/admin/dashboard", { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
         return r.json();
       })
       .then(setData)
-      .catch(() => setData(null))
+      .catch((err) => {
+        console.error("[dashboard-view] fetch failed:", err);
+        setData(null);
+      })
       .finally(() => setLoading(false));
   }, []);
 
