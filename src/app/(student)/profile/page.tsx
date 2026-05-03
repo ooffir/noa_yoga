@@ -44,7 +44,11 @@ export default async function ProfilePage() {
     <div className="mx-auto max-w-lg px-4 py-6">
       <h1 className="text-2xl font-bold text-sage-900 mb-6">האזור האישי</h1>
       <ProfileView
-        user={{ name: dbUser.name || "", email: dbUser.email }}
+        user={{
+          name: dbUser.name || "",
+          phone: dbUser.phone || "",
+          email: dbUser.email,
+        }}
         upcomingBookings={JSON.parse(JSON.stringify(upcomingBookings))}
         pastBookings={JSON.parse(JSON.stringify(pastBookings))}
         totalCredits={totalCredits}

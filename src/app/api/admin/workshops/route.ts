@@ -31,8 +31,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { title, description, date, price, imageUrl, maxCapacity } =
-      await req.json();
+    const {
+      title,
+      description,
+      date,
+      price,
+      imageUrl,
+      maxCapacity,
+      reminderEmailContent,
+      reminderTimingHours,
+    } = await req.json();
 
     if (!title || !description || !date || price == null) {
       return NextResponse.json(
@@ -49,6 +57,16 @@ export async function POST(req: Request) {
         price: Number(price),
         imageUrl: imageUrl || null,
         maxCapacity: maxCapacity ? Number(maxCapacity) : null,
+        // Reminder config — both nullable. Empty string from the form
+        // is normalised to null so the cron query stays simple.
+        reminderEmailContent:
+          typeof reminderEmailContent === "string" && reminderEmailContent.trim()
+            ? reminderEmailContent
+            : null,
+        reminderTimingHours:
+          reminderTimingHours != null && reminderTimingHours !== ""
+            ? Math.max(0, Number(reminderTimingHours))
+            : null,
       },
     });
 

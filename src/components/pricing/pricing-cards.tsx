@@ -13,6 +13,7 @@ import {
   generatePaymeSaleForCredits,
   type CreditPurchaseType,
 } from "@/actions/payme";
+import { ProfileGateDialog } from "@/components/profile/profile-gate-dialog";
 
 interface Props {
   creditPrice: number;
@@ -35,6 +36,9 @@ export function PricingCards({
   // could both fire the server action and create duplicate Payment rows.
   // `useRef.current` mutates immediately and blocks re-entry.
   const submittingRef = useRef(false);
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
+  const [pendingTypeForRetry, setPendingTypeForRetry] =
+    useState<CreditPurchaseType | null>(null);
 
   // ── Savings math, all computed from the three DB prices ──
   const savings5 = creditPrice * 5 - punchCard5Price;
@@ -107,6 +111,14 @@ export function PricingCards({
     startTransition(async () => {
       const result = await generatePaymeSaleForCredits(type);
       if (!result.ok) {
+        if (result.requiresProfile) {
+          // Save the type that was clicked so we can re-fire after save.
+          setPendingTypeForRetry(type);
+          setProfileGateOpen(true);
+          setPendingType(null);
+          submittingRef.current = false;
+          return;
+        }
         toast.error(result.error);
         setPendingType(null);
         submittingRef.current = false;
@@ -174,6 +186,19 @@ export function PricingCards({
           </Card>
         );
       })}
+
+      <ProfileGateDialog
+        open={profileGateOpen}
+        onOpenChange={setProfileGateOpen}
+        contextMessage="לפני המעבר לתשלום, נשמח אם תעדכני את שמך ומספר הטלפון שלך."
+        onSaved={() => {
+          if (pendingTypeForRetry) {
+            const type = pendingTypeForRetry;
+            setPendingTypeForRetry(null);
+            setTimeout(() => handlePurchase(type), 250);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loading";
 import { generatePaymeSaleForCredits } from "@/actions/payme";
+import { ProfileGateDialog } from "@/components/profile/profile-gate-dialog";
 
 interface Props {
   open: boolean;
@@ -54,6 +55,7 @@ export function BookChoiceDialog({
   const [redirecting, setRedirecting] = useState(false);
   // Synchronous double-click guard (see pricing-cards.tsx for rationale).
   const submittingRef = useRef(false);
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
 
   const loading = pending || redirecting;
 
@@ -67,6 +69,12 @@ export function BookChoiceDialog({
         classInstanceId,
       );
       if (!result.ok) {
+        // Profile gate — open the modal instead of toasting an error.
+        if (result.requiresProfile) {
+          setProfileGateOpen(true);
+          submittingRef.current = false;
+          return;
+        }
         toast.error(result.error);
         submittingRef.current = false;
         return;
@@ -173,6 +181,15 @@ export function BookChoiceDialog({
           </Button>
         </div>
       </DialogContent>
+
+      <ProfileGateDialog
+        open={profileGateOpen}
+        onOpenChange={setProfileGateOpen}
+        contextMessage="לפני המעבר לתשלום, נשמח אם תעדכני את שמך ומספר הטלפון שלך."
+        onSaved={() => {
+          setTimeout(() => handleSingleClass(), 250);
+        }}
+      />
     </Dialog>
   );
 }

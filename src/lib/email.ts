@@ -659,6 +659,149 @@ export function workshopCancellationEmail(p: WorkshopCancellationParams) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Template H — Workshop Reminder (marketing / opt-outable)
+//
+//  Sent by the daily cron to every paid registrant of an upcoming
+//  workshop, `reminderTimingHours` hours before the start time.
+//  Each workshop owns its own message body — Noa writes it when she
+//  creates the workshop. If she leaves it empty we fall back to a
+//  generic studio-branded message.
+//
+//  Marked marketing because, unlike a payment receipt, this is
+//  promotional copy ("see you tomorrow!") that the user can opt out of
+//  via their profile settings.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface WorkshopReminderParams {
+  name: string;
+  workshopTitle: string;
+  workshopDate: Date;
+  /** Admin-authored message from Workshop.reminderEmailContent. Empty → fall back. */
+  customBody?: string | null;
+}
+
+export function workshopReminderEmail(p: WorkshopReminderParams) {
+  const formattedDate = formatHebrewDate(p.workshopDate);
+  const startTime = `${String(p.workshopDate.getHours()).padStart(2, "0")}:${String(p.workshopDate.getMinutes()).padStart(2, "0")}`;
+  const subject = `תזכורת לסדנה: ${p.workshopTitle}`;
+
+  // 1. Admin-authored body wins. Variables resolved here.
+  if (p.customBody && p.customBody.trim()) {
+    const rendered = renderAdminTemplateEmail({
+      template: p.customBody,
+      data: {
+        name: p.name,
+        title: p.workshopTitle,
+        date: formattedDate,
+        time: startTime,
+      },
+      title: `תזכורת: ${p.workshopTitle}`,
+      ctaLabel: "פרטי הסדנה",
+      ctaUrl: `${SITE_URL}/workshops`,
+    });
+    if (rendered) return { subject, html: rendered.html };
+  }
+
+  // 2. Generic fallback if the admin didn't write a custom body.
+  const body = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};width:80px;">הסדנה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(p.workshopTitle)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">תאריך</td>
+        <td style="padding:4px 0;">${formattedDate}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">שעה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(startTime)}</td>
+      </tr>
+    </table>
+  `;
+
+  return {
+    subject,
+    html: renderEmail({
+      title: "תזכורת לסדנה",
+      intro: `היי ${escapeHtml(p.name)}, רק מזכירים שהסדנה ${escapeHtml(p.workshopTitle)} מתקרבת. נשמח לראות אותך!`,
+      body,
+      ctaLabel: "פרטי הסדנה",
+      ctaUrl: `${SITE_URL}/workshops`,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Template I — Workshop Registration Confirmation (transactional, ALWAYS sent)
+//
+//  Sent the moment a workshop payment is captured. Combines the legal
+//  receipt info (amount, transaction ref) with the registration details
+//  (workshop title, date, time) so the user has everything in one
+//  place. Replaces the previously-sent generic `paymentReceiptEmail`
+//  for the workshop flow.
+//
+//  Transactional because: the payment was just captured (legal receipt
+//  obligation) AND the seat was booked (logistical confirmation).
+//  Cannot be opted out of.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface WorkshopConfirmationParams {
+  name: string;
+  workshopTitle: string;
+  workshopDate: Date;
+  amountIls: number;
+  transactionId: string;
+  /** Optional — included verbatim so the user has a recap of what they paid for. */
+  workshopDescription?: string | null;
+}
+
+export function workshopRegistrationConfirmationEmail(p: WorkshopConfirmationParams) {
+  const formattedDate = formatHebrewDate(p.workshopDate);
+  const startTime = `${String(p.workshopDate.getHours()).padStart(2, "0")}:${String(p.workshopDate.getMinutes()).padStart(2, "0")}`;
+  const formattedAmount = `${p.amountIls.toLocaleString("he-IL", { maximumFractionDigits: 2 })} ₪`;
+
+  const body = `
+    <div style="margin-bottom:8px;color:${SAGE_900};font-size:14px;font-weight:700;">פרטי הסדנה:</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;margin-bottom:14px;">
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};width:110px;">הסדנה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(p.workshopTitle)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">תאריך</td>
+        <td style="padding:4px 0;">${formattedDate}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">שעה</td>
+        <td style="padding:4px 0;font-weight:600;">${escapeHtml(startTime)}</td>
+      </tr>
+    </table>
+
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed ${SAGE_100};margin-bottom:8px;color:${SAGE_900};font-size:14px;font-weight:700;">פרטי תשלום:</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="color:${SAGE_900};font-size:14px;">
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};width:110px;">סכום</td>
+        <td style="padding:4px 0;font-weight:600;">${formattedAmount}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;color:${SAGE_500};">אישור עסקה</td>
+        <td style="padding:4px 0;font-family:monospace;font-size:12px;color:${SAGE_500};">${escapeHtml(p.transactionId)}</td>
+      </tr>
+    </table>
+  `;
+
+  return {
+    subject: `הרשמתך לסדנה ${p.workshopTitle} אושרה — Noa Yogis`,
+    html: renderEmail({
+      title: "ההרשמה אושרה!",
+      intro: `היי ${escapeHtml(p.name)}, איזה כיף שנרשמת לסדנה. שמרנו לך מקום ונשמח לראות אותך.`,
+      body,
+      ctaLabel: "פרטי הסדנה",
+      ctaUrl: `${SITE_URL}/workshops`,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 function formatHebrewDate(d: Date): string {

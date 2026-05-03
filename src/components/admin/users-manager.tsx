@@ -24,6 +24,8 @@ import {
   X,
   Calendar,
   Ticket,
+  Pencil,
+  Phone,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -97,6 +99,12 @@ export function UsersManager() {
   const [historyUserId, setHistoryUserId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPayload | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Edit-details dialog state — name + phone editor
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -190,6 +198,55 @@ export function UsersManager() {
     }
   }, []);
 
+  const openEdit = (u: UserRow) => {
+    setEditUserId(u.id);
+    setEditName(u.name || "");
+    setEditPhone(u.phone || "");
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editUserId) return;
+
+    setEditSaving(true);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: editUserId,
+          name: editName.trim(),
+          // Allow blanking via empty string — server treats it as a valid clear.
+          phone: editPhone.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "עדכון נכשל");
+        return;
+      }
+      toast.success("הפרטים עודכנו");
+      // Reflect in local state without refetching the whole list.
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === editUserId
+            ? {
+                ...u,
+                name: editName.trim() || null,
+                phone: editPhone.trim() || null,
+              }
+            : u,
+        ),
+      );
+      setEditUserId(null);
+    } catch (err) {
+      console.error("[users-manager] save details failed:", err);
+      toast.error("עדכון נכשל");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const filtered = users.filter(
     (u) =>
       !search ||
@@ -244,7 +301,12 @@ export function UsersManager() {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-sage-500 truncate">{user.email}</p>
+                    <p className="text-xs text-sage-500 truncate" dir="ltr">{user.email}</p>
+                    {user.phone && (
+                      <p className="text-xs text-sage-500 truncate" dir="ltr">
+                        {user.phone}
+                      </p>
+                    )}
                     <div className="flex gap-3 mt-1 text-xs text-sage-400">
                       <span>{user.totalBookings} הזמנות</span>
                       {user.punchCardCredits > 0 && (
@@ -253,10 +315,24 @@ export function UsersManager() {
                           {user.punchCardCredits} כרטיסייה
                         </span>
                       )}
+                      {!user.phone && (
+                        <span className="flex items-center gap-1 text-amber-600">
+                          ללא טלפון
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-xl text-sage-500 hover:text-sage-700"
+                      onClick={() => openEdit(user)}
+                      title="עריכת שם וטלפון"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -308,6 +384,72 @@ export function UsersManager() {
           ))}
         </div>
       )}
+
+      {/* ─── Edit details dialog (name + phone) ─── */}
+      <Dialog
+        open={editUserId !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditUserId(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>עריכת פרטי תלמידה</DialogTitle>
+            <DialogDescription>
+              עדכון שם ומספר טלפון. האימייל קשור לחשבון Clerk ולא ניתן לעריכה כאן.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveEdit} className="space-y-4 mt-2">
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 block">
+                שם מלא
+              </label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="שם מלא"
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-sage-700 mb-1 flex items-center gap-2">
+                <Phone className="h-3.5 w-3.5 text-sage-400" />
+                טלפון
+              </label>
+              <Input
+                type="tel"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="050-1234567"
+                autoComplete="off"
+                dir="ltr"
+              />
+              <p className="mt-1 text-[11px] text-sage-400">
+                ניתן להשאיר ריק אם התלמידה לא רוצה לשתף.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setEditUserId(null)}
+                disabled={editSaving}
+                className="rounded-2xl"
+              >
+                ביטול
+              </Button>
+              <Button
+                type="submit"
+                disabled={editSaving}
+                className="rounded-2xl"
+              >
+                {editSaving ? <Spinner className="h-4 w-4" /> : "שמירה"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* ─── History drawer ─── */}
       <Dialog

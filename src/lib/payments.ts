@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
-import { paymentReceiptEmail, sendTransactionalEmail } from "@/lib/email";
+import {
+  paymentReceiptEmail,
+  sendTransactionalEmail,
+  workshopRegistrationConfirmationEmail,
+} from "@/lib/email";
 import {
   creditsForPaymentType,
   productLabelFor,
@@ -246,7 +250,14 @@ export async function completeWorkshopSuccess(
     where: { id: registrationId },
     include: {
       user: { select: { email: true, name: true } },
-      workshop: { select: { title: true, price: true } },
+      workshop: {
+        select: {
+          title: true,
+          price: true,
+          date: true,
+          description: true,
+        },
+      },
     },
   });
   if (!reg) return { kind: "not_found" };
@@ -266,20 +277,25 @@ export async function completeWorkshopSuccess(
 
   const workshopProductLabel = `סדנה: ${reg.workshop.title}`;
 
-  // ── Side effect 1: Email receipt (transactional, bypasses opt-out) ──
+  // ── Side effect 1: Workshop registration confirmation email ──
+  // Replaces the previously-sent generic payment receipt with a
+  // workshop-specific email that combines the legal receipt info with
+  // the workshop date / time / details — everything the user needs in
+  // one place. Transactional, bypasses the receiveEmails opt-out.
   try {
-    const { subject, html } = paymentReceiptEmail({
+    const { subject, html } = workshopRegistrationConfirmationEmail({
       name: reg.user.name || "תלמידה יקרה",
-      productLabel: workshopProductLabel,
+      workshopTitle: reg.workshop.title,
+      workshopDate: reg.workshop.date,
       amountIls: reg.workshop.price,
-      date: new Date(),
       transactionId: reg.id,
+      workshopDescription: reg.workshop.description,
     });
     sendTransactionalEmail({ to: reg.user.email, subject, html }).catch((err) =>
-      console.error("[payments] workshop receipt email failed:", err),
+      console.error("[payments] workshop confirmation email failed:", err),
     );
   } catch (err) {
-    console.error("[payments] workshop receipt email build failed:", err);
+    console.error("[payments] workshop confirmation email build failed:", err);
   }
 
   // ── Side effect 2: Ypay tax-receipt automation ──

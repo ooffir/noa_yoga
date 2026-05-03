@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog";
 import { EmailPreferencesCard } from "@/components/profile/email-preferences-card";
+import { ProfileDetailsCard } from "@/components/profile/profile-details-card";
 
 interface BookingData {
   id: string;
@@ -30,7 +31,7 @@ interface PunchCardData {
 }
 
 interface ProfileViewProps {
-  user: { name: string; email: string };
+  user: { name: string; phone: string; email: string };
   upcomingBookings: BookingData[];
   pastBookings: BookingData[];
   totalCredits: number;
@@ -152,6 +153,13 @@ export function ProfileView({
           )}
         </CardContent>
       </Card>
+
+      {/* פרטים אישיים */}
+      <ProfileDetailsCard
+        initialName={user.name}
+        initialPhone={user.phone}
+        email={user.email}
+      />
 
       {/* העדפות תקשורת */}
       <EmailPreferencesCard initialValue={receiveEmails} />

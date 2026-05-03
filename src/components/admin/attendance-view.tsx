@@ -10,6 +10,7 @@ import {
   X,
   UserPlus,
   Clock3,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,57 @@ import { Badge } from "@/components/ui/badge";
 import { PageLoader, Spinner } from "@/components/ui/loading";
 import { formatTime } from "@/lib/utils";
 import toast from "react-hot-toast";
+
+/**
+ * Build a `tel:` href from a user-entered phone number.
+ *
+ * The user could type "050-1234567", "+972 50 123 4567" etc. The tel:
+ * scheme accepts those formats but we normalise to digits + leading "+"
+ * so the dialer of every device parses it predictably.
+ */
+function buildTelHref(phone: string): string {
+  const trimmed = phone.trim();
+  if (!trimmed) return "";
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  return `tel:${hasPlus ? "+" : ""}${digits}`;
+}
+
+/**
+ * Inline name + click-to-call phone link. Used in both the attendance
+ * roster and the waitlist below, so the visual treatment stays
+ * consistent. Phone is muted (text-sage-400, text-xs) so the name
+ * remains the primary focus per design.
+ */
+function NameWithPhone({
+  name,
+  email,
+  phone,
+}: {
+  name?: string | null;
+  email: string;
+  phone?: string | null;
+}) {
+  const displayName = name || email;
+  return (
+    <div className="min-w-0">
+      <p className="font-medium text-sage-900 text-sm truncate">
+        {displayName}
+      </p>
+      {phone && (
+        <a
+          href={buildTelHref(phone)}
+          dir="ltr"
+          className="mt-0.5 inline-flex items-center gap-1 text-xs text-sage-400 hover:text-sage-700 hover:underline transition-colors"
+          aria-label={`התקשרי אל ${displayName} בטלפון ${phone}`}
+        >
+          <Phone className="h-3 w-3 shrink-0" />
+          <span dir="ltr">{phone}</span>
+        </a>
+      )}
+    </div>
+  );
+}
 
 interface AdminClass {
   id: string;
@@ -213,17 +265,14 @@ export function AttendanceView() {
                 {attendees.map((booking) => (
                   <div
                     key={booking.id}
-                    className="flex items-center justify-between rounded-2xl border border-sage-100 px-4 py-3"
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-sage-100 px-4 py-3"
                   >
-                    <div>
-                      <p className="font-medium text-sage-900 text-sm">
-                        {booking.user.name || booking.user.email}
-                      </p>
-                      {booking.user.phone && (
-                        <p className="text-xs text-sage-400">{booking.user.phone}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
+                    <NameWithPhone
+                      name={booking.user.name}
+                      email={booking.user.email}
+                      phone={booking.user.phone}
+                    />
+                    <div className="flex items-center gap-2 shrink-0">
                       {booking.attendedAt ? (
                         <>
                           <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full">נוכחת</Badge>
@@ -281,20 +330,17 @@ export function AttendanceView() {
                 {waitlist.map((entry, idx) => (
                   <div
                     key={entry.id}
-                    className="flex items-center justify-between rounded-2xl border border-amber-100 bg-amber-50/30 px-4 py-3"
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-amber-100 bg-amber-50/30 px-4 py-3"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">
                         {idx + 1}
                       </span>
-                      <div>
-                        <p className="font-medium text-sage-900 text-sm">
-                          {entry.user.name || entry.user.email}
-                        </p>
-                        {entry.user.phone && (
-                          <p className="text-xs text-sage-400">{entry.user.phone}</p>
-                        )}
-                      </div>
+                      <NameWithPhone
+                        name={entry.user.name}
+                        email={entry.user.email}
+                        phone={entry.user.phone}
+                      />
                     </div>
                     <Button
                       variant="outline"

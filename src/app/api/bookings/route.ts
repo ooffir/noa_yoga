@@ -4,12 +4,23 @@ import { getDbUser } from "@/lib/get-db-user";
 import { BookingEngine } from "@/lib/booking-engine";
 import { db } from "@/lib/db";
 import { bookingSchema } from "@/lib/validations";
+import {
+  isProfileComplete,
+  PROFILE_INCOMPLETE_RESPONSE,
+} from "@/lib/profile-validation";
 
 export async function POST(req: Request) {
   try {
     const dbUser = await getDbUser();
     if (!dbUser) {
       return NextResponse.json({ error: "יש להתחבר תחילה" }, { status: 401 });
+    }
+
+    // Hard gate: name + phone are required before any booking is
+    // created. The frontend should have caught this with the profile
+    // modal — this is the server-side safety net for direct API hits.
+    if (!isProfileComplete(dbUser)) {
+      return NextResponse.json(PROFILE_INCOMPLETE_RESPONSE, { status: 422 });
     }
 
     const body = await req.json();

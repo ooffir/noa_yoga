@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/loading";
 import { CalendarPlus } from "lucide-react";
 import { BookChoiceDialog } from "@/components/schedule/book-choice-dialog";
 import { CancelBookingDialog } from "@/components/schedule/cancel-booking-dialog";
+import { ProfileGateDialog } from "@/components/profile/profile-gate-dialog";
 
 interface BookButtonProps {
   classInstanceId: string;
@@ -60,6 +61,10 @@ export function BookButton({
   const [choiceOpen, setChoiceOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelBookingId, setCancelBookingId] = useState<string | null>(null);
+  // Profile completion gate. When the API returns 422+requiresProfile,
+  // we open this dialog. After a successful save, the user is told to
+  // retry — we don't auto-retry so the user can confirm the action.
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
 
   const handleClick = async () => {
     // Cancel flow — fetch booking id, then open dialog instead of cancelling immediately.
@@ -127,7 +132,9 @@ export function BookButton({
       const data = await res.json();
 
       if (!res.ok) {
-        if (data.error?.includes("יתרת שיעורים")) {
+        if (res.status === 422 && data.requiresProfile) {
+          setProfileGateOpen(true);
+        } else if (data.error?.includes("יתרת שיעורים")) {
           setChoiceOpen(true);
         } else {
           toast.error(data.error || "הפעולה נכשלה");
@@ -213,6 +220,17 @@ export function BookButton({
           cancellationHoursBefore={cancellationHoursBefore}
         />
       )}
+
+      <ProfileGateDialog
+        open={profileGateOpen}
+        onOpenChange={setProfileGateOpen}
+        contextMessage="כדי להירשם לשיעור או להצטרף לרשימת ההמתנה, נשמח אם תעדכני את שמך ומספר הטלפון שלך."
+        onSaved={() => {
+          // Re-fire the original click handler now that the profile is complete.
+          // setTimeout to allow the dialog close animation to finish first.
+          setTimeout(() => handleClick(), 250);
+        }}
+      />
     </>
   );
 }

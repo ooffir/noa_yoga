@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import toast from "react-hot-toast";
 import { generatePaymeSaleForWorkshop } from "@/actions/payme";
+import { ProfileGateDialog } from "@/components/profile/profile-gate-dialog";
 
 interface Props {
   workshopId: string;
@@ -48,6 +49,7 @@ export function WorkshopRegisterButton({
   const [consented, setConsented] = useState(false);
   // Synchronous double-click guard — useState is batched, useRef is not.
   const submittingRef = useRef(false);
+  const [profileGateOpen, setProfileGateOpen] = useState(false);
 
   const loading = pending || redirecting;
 
@@ -72,6 +74,14 @@ export function WorkshopRegisterButton({
       const result = await generatePaymeSaleForWorkshop(workshopId);
 
       if (!result.ok) {
+        if (result.requiresProfile) {
+          // Close consent dialog so user sees the profile gate clearly,
+          // then re-fire confirmAndPay() after they save.
+          setDialogOpen(false);
+          setProfileGateOpen(true);
+          submittingRef.current = false;
+          return;
+        }
         toast.error(result.error);
         submittingRef.current = false;
         return;
@@ -170,6 +180,23 @@ export function WorkshopRegisterButton({
           </div>
         </DialogContent>
       </Dialog>
+
+      <ProfileGateDialog
+        open={profileGateOpen}
+        onOpenChange={setProfileGateOpen}
+        contextMessage="לפני המעבר לתשלום עבור הסדנה, נשמח אם תעדכני את שמך ומספר הטלפון שלך."
+        onSaved={() => {
+          // Reopen the consent dialog (user still needs to consent),
+          // then auto-submit if they had already consented before the gate fired.
+          setTimeout(() => {
+            if (consented) {
+              confirmAndPay();
+            } else {
+              setDialogOpen(true);
+            }
+          }, 250);
+        }}
+      />
     </>
   );
 }

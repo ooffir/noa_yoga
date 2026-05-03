@@ -375,9 +375,26 @@ model Workshop {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // ── NEW: Per-workshop reminder configuration ──
+  // Custom email body Noa writes for THIS specific workshop. Supports the
+  // same {{name}} {{title}} {{date}} {{time}} variables as other admin
+  // templates. NULL → fall back to a generic studio-wide template.
+  reminderEmailContent String? @map("reminder_email_content") @db.Text
+
+  // How many hours BEFORE the workshop to send the reminder.
+  // Common values: 24 (a day before), 48 (two days before), 72 (three days).
+  // NULL → don't send a reminder for this workshop.
+  reminderTimingHours  Int?    @map("reminder_timing_hours")
+
+  // Idempotency guard. Set to NOW() the moment the cron sends the
+  // reminder. Prevents double-sends across multiple cron runs and
+  // across redeployments. NULL = not yet sent.
+  reminderSentAt       DateTime? @map("reminder_sent_at") @db.Timestamptz(6)
+
   registrations WorkshopRegistration[]
 
   @@index([date, isActive])
+  @@index([isActive, reminderSentAt, date]) // cron query: unsent reminders for upcoming active workshops
   @@map("workshops")
 }
 

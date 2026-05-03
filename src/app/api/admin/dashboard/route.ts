@@ -95,13 +95,39 @@ export async function GET() {
       `,
     ),
     db.punchCard.count({ where: { status: "ACTIVE" } }),
-    db.payment.aggregate({
+    // Credit / punch-card revenue grouped by product type. Each row in
+    // the result has { type, _sum: { amount }, _count }. The shape lets
+    // us compute SINGLE_CLASS / PUNCH_CARD_5 / PUNCH_CARD splits in one
+    // query rather than three. Payment.amount is stored in agurot.
+    db.payment.groupBy({
+      by: ["type"],
       where: {
         status: "COMPLETED",
         createdAt: { gte: monthStart, lte: monthEnd },
       },
       _sum: { amount: true },
+      _count: { _all: true },
     }),
+    // Workshop revenue. Workshop.price is stored in shekels (NOT
+    // agurot — that's a historical inconsistency we're not changing
+    // now). Multiply by 100 below to align units with Payment.amount.
+    //
+    // Aggregating across the JOIN with raw SQL because Prisma's
+    // .aggregate() doesn't support summing a field on a related row.
+    db.$queryRaw<
+      Array<{ workshop_revenue_agurot: bigint; workshop_count: bigint }>
+    >(
+      Prisma.sql`
+        SELECT
+          COALESCE(SUM(w.price), 0)::bigint * 100 AS workshop_revenue_agurot,
+          COUNT(*)::bigint AS workshop_count
+        FROM workshop_registrations wr
+        JOIN workshops w ON w.id = wr.workshop_id
+        WHERE wr.payment_status = 'COMPLETED'
+          AND wr.created_at >= ${monthStart}
+          AND wr.created_at <= ${monthEnd}
+      `,
+    ),
     db.booking.count({
       where: {
         status: "CONFIRMED",
@@ -136,12 +162,17 @@ export async function GET() {
     [],
   );
   const activePunchCards = take<number>(2, "activePunchCards", 0);
-  const monthlyRevenue = take<{ _sum: { amount: number | null } }>(
-    3,
-    "monthlyRevenue",
-    { _sum: { amount: 0 } },
-  );
-  const weeklyBookings = take<number>(4, "weeklyBookings", 0);
+  const creditRevenueGrouped = take<
+    Array<{
+      type: string;
+      _sum: { amount: number | null };
+      _count: { _all: number };
+    }>
+  >(3, "creditRevenueGrouped", []);
+  const workshopRevenueRow = take<
+    Array<{ workshop_revenue_agurot: bigint; workshop_count: bigint }>
+  >(4, "workshopRevenue", []);
+  const weeklyBookings = take<number>(5, "weeklyBookings", 0);
   const popularClasses = take<
     Array<{
       id: string;
@@ -149,7 +180,7 @@ export async function GET() {
       instructor: string;
       instances: Array<{ _count: { bookings: number } }>;
     }>
-  >(5, "popularClasses", []);
+  >(6, "popularClasses", []);
 
   // Optional-chain `_count.bookings` defensively — even though Prisma
   // always populates _count, a future refactor could break this and
@@ -170,6 +201,41 @@ export async function GET() {
   const activeStudents = Number(activeStudentsRow[0]?.active_count ?? 0);
   const inactiveStudents = Number(activeStudentsRow[0]?.inactive_count ?? 0);
 
+  // ── Per-product revenue + sales count ──
+  // Helper that pulls one product type out of the grouped result.
+  function getProductStats(productType: string) {
+    const row = creditRevenueGrouped.find((r) => r.type === productType);
+    return {
+      revenueAgurot: row?._sum.amount ?? 0,
+      salesCount: row?._count._all ?? 0,
+    };
+  }
+
+  const singleClass = getProductStats("SINGLE_CLASS");
+  const punchCard5 = getProductStats("PUNCH_CARD_5");
+  const punchCard10 = getProductStats("PUNCH_CARD");
+
+  const workshopStats = {
+    revenueAgurot: Number(workshopRevenueRow[0]?.workshop_revenue_agurot ?? 0),
+    salesCount: Number(workshopRevenueRow[0]?.workshop_count ?? 0),
+  };
+
+  // Combined monthly total. All four values are agurot — the UI divides
+  // by 100 to render ₪.
+  const monthlyRevenue =
+    singleClass.revenueAgurot +
+    punchCard5.revenueAgurot +
+    punchCard10.revenueAgurot +
+    workshopStats.revenueAgurot;
+
+  // Aggregate credit revenue for backward compatibility. The dashboard
+  // view's optional `revenueBreakdown.credits` aggregate is still useful
+  // for the simple sublabel; product-level detail goes in `productRevenue`.
+  const creditRevenueAgurot =
+    singleClass.revenueAgurot +
+    punchCard5.revenueAgurot +
+    punchCard10.revenueAgurot;
+
   const partialFailure = settled.some((r) => r.status === "rejected");
 
   return NextResponse.json({
@@ -177,7 +243,24 @@ export async function GET() {
     activeStudents,
     inactiveStudents,
     activePunchCards,
-    monthlyRevenue: monthlyRevenue?._sum?.amount ?? 0,
+    // monthlyRevenue is the sum of credit/punch-card sales AND workshop
+    // registrations for the current month. Stored in agurot — the UI is
+    // responsible for converting to ₪ before rendering.
+    monthlyRevenue,
+    revenueBreakdown: {
+      credits: creditRevenueAgurot,
+      workshops: workshopStats.revenueAgurot,
+    },
+    // ── New: Per-product breakdown for the analytics tab ──
+    // Each entry: { revenueAgurot, salesCount }.
+    // The frontend uses this for the four-card breakdown + the filter
+    // pill that lets Noa drill down into a single product type.
+    productRevenue: {
+      SINGLE_CLASS: singleClass,
+      PUNCH_CARD_5: punchCard5,
+      PUNCH_CARD: punchCard10,
+      WORKSHOP: workshopStats,
+    },
     weeklyBookings,
     popularClasses: classPopularity,
     partialFailure,

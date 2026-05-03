@@ -6,6 +6,7 @@ import {
   productLabelFor,
   type CreditPurchaseType,
 } from "@/lib/product-catalog";
+import { isProfileComplete } from "@/lib/profile-validation";
 
 /**
  * PayMe REST integration — Hosted Payment Page (generate-sale).
@@ -47,7 +48,7 @@ const PAYME_TXN_ID_MAX = 50;
 
 export type PaymeSaleResult =
   | { ok: true; url: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; requiresProfile?: boolean };
 
 interface PaymeGenerateSaleResponse {
   status_code?: number;
@@ -216,6 +217,14 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "יש להתחבר כדי להירשם לסדנה" };
   }
 
+  if (!isProfileComplete(user)) {
+    return {
+      ok: false,
+      error: "יש להשלים את פרטי הפרופיל (שם וטלפון) לפני הרשמה לסדנה",
+      requiresProfile: true,
+    };
+  }
+
   const workshop = await db.workshop.findUnique({ where: { id: workshopId } });
   if (!workshop || !workshop.isActive) {
     return { ok: false, error: "הסדנה לא נמצאה" };
@@ -320,6 +329,14 @@ export async function generatePaymeSaleForCredits(
   const user = await getDbUser();
   if (!user) {
     return { ok: false, error: "יש להתחבר כדי לרכוש" };
+  }
+
+  if (!isProfileComplete(user)) {
+    return {
+      ok: false,
+      error: "יש להשלים את פרטי הפרופיל (שם וטלפון) לפני רכישה",
+      requiresProfile: true,
+    };
   }
 
   // Pricing from admin settings; fall back to sane defaults on error.

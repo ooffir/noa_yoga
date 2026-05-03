@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sendMarketingEmail, reminderEmail } from "@/lib/email";
+import {
+  sendMarketingEmail,
+  reminderEmail,
+  workshopReminderEmail,
+} from "@/lib/email";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { getEmailDispatchConfig } from "@/lib/site-settings";
 
@@ -10,17 +14,28 @@ import { getEmailDispatchConfig } from "@/lib/site-settings";
  * Schedule: fires once per day at 07:00 UTC (~09:00-10:00 Israel,
  * depending on DST). Defined in vercel.json.
  *
- * Why not hourly with an in-handler gate on `reminderHour`?
- *   The Hobby plan on Vercel allows only one cron invocation per day
- *   per schedule — hourly expressions (`0 * * * *`) fail the entire
- *   deploy. So the cron fires once, unconditionally, and we read
- *   `reminderDaysBefore` from SiteSettings to decide which day's
- *   bookings to target.
+ * Two independent loops run in this handler:
  *
- * `reminderHour` in SiteSettings is retained for future use (if Noa
- * upgrades to Vercel Pro we can restore the hourly gated pattern) but
- * currently has no runtime effect — the cron always runs at the
- * vercel.json time regardless of that setting.
+ *   1. CLASS REMINDERS — every CONFIRMED booking whose class falls on
+ *      `now + reminderDaysBefore` (set in SiteSettings) gets an email.
+ *
+ *   2. WORKSHOP REMINDERS — every COMPLETED workshop registration
+ *      whose workshop is `<= reminderTimingHours` away from now (and
+ *      `> 0` away — i.e. still in the future) gets an email. Workshop
+ *      reminders are gated by Workshop.reminderSentAt so each workshop
+ *      sends at most once. The admin can override the message body
+ *      per workshop via Workshop.reminderEmailContent.
+ *
+ * Why both in one cron rather than two?
+ *   The Hobby plan on Vercel allows only one cron invocation per day
+ *   per schedule. Splitting them would require two daily slots which
+ *   we can't schedule at the right offset — easier to fold both loops
+ *   into the same handler.
+ *
+ * Failure isolation: each individual reminder send is wrapped so that
+ * a failed send (bounced address, SMTP hiccup) doesn't block the rest
+ * of the batch. The handler returns 200 with per-loop counts even if
+ * some sends failed.
  */
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -30,9 +45,12 @@ export async function GET(req: Request) {
 
   try {
     const config = await getEmailDispatchConfig();
+    const now = new Date();
 
-    // ── Window: the day `reminderDaysBefore` from now, local midnight→11:59PM ──
-    const targetDay = addDays(new Date(), config.reminderDaysBefore);
+    // ════════════════════════════════════════════════════════════════
+    //  LOOP 1 — Class reminders
+    // ════════════════════════════════════════════════════════════════
+    const targetDay = addDays(now, config.reminderDaysBefore);
     const dayStart = startOfDay(targetDay);
     const dayEnd = endOfDay(targetDay);
 
@@ -50,38 +68,163 @@ export async function GET(req: Request) {
       },
     });
 
-    let sent = 0;
-    let skipped = 0;
+    let classSent = 0;
+    let classSkipped = 0;
+    let classFailed = 0;
     for (const booking of bookings) {
-      const ci = booking.classInstance;
-      const [hh, mm] = ci.startTime.split(":").map(Number);
-      const classDateTime = new Date(ci.date);
-      classDateTime.setHours(hh, mm, 0, 0);
+      try {
+        const ci = booking.classInstance;
+        const [hh, mm] = ci.startTime.split(":").map(Number);
+        const classDateTime = new Date(ci.date);
+        classDateTime.setHours(hh, mm, 0, 0);
 
-      const { subject, html } = reminderEmail({
-        name: booking.user.name || "תלמידה יקרה",
-        className: ci.classDefinition.title,
-        date: classDateTime,
-        startTime: ci.startTime,
-        overrideTemplate: config.emailTemplateReminder,
-      });
+        const { subject, html } = reminderEmail({
+          name: booking.user.name || "תלמידה יקרה",
+          className: ci.classDefinition.title,
+          date: classDateTime,
+          startTime: ci.startTime,
+          overrideTemplate: config.emailTemplateReminder,
+        });
 
-      if (booking.user.receiveEmails) {
-        await sendMarketingEmail(
-          { email: booking.user.email, receiveEmails: booking.user.receiveEmails },
-          { subject, html },
+        if (booking.user.receiveEmails) {
+          await sendMarketingEmail(
+            { email: booking.user.email, receiveEmails: booking.user.receiveEmails },
+            { subject, html },
+          );
+          classSent++;
+        } else {
+          classSkipped++;
+        }
+      } catch (err) {
+        classFailed++;
+        console.error(
+          `[cron/reminders] class reminder failed for booking ${booking.id}:`,
+          err,
         );
-        sent++;
-      } else {
-        skipped++;
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  LOOP 2 — Workshop reminders
+    //
+    //  A workshop is "due" for its reminder when:
+    //    - It's still upcoming (date > now)
+    //    - reminderTimingHours is set (otherwise no reminder for it)
+    //    - now >= date - reminderTimingHours hours
+    //    - reminderSentAt IS NULL (idempotency)
+    //
+    //  Done as a Prisma query rather than raw SQL so the relation
+    //  fetching stays clean. We over-fetch a bit (any workshop with
+    //  the timing field set) and filter the timing window in JS — the
+    //  table is tiny (dozens of workshops, not thousands).
+    // ════════════════════════════════════════════════════════════════
+    const workshopCandidates = await db.workshop.findMany({
+      where: {
+        isActive: true,
+        date: { gt: now },
+        reminderTimingHours: { not: null },
+        reminderSentAt: null,
+      },
+      include: {
+        registrations: {
+          where: { paymentStatus: "COMPLETED" },
+          include: {
+            user: {
+              select: {
+                email: true,
+                name: true,
+                receiveEmails: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    let workshopReminderSent = 0;
+    let workshopReminderSkipped = 0;
+    let workshopReminderFailed = 0;
+    let workshopsProcessed = 0;
+
+    for (const w of workshopCandidates) {
+      // Re-check the timing window now (in case the cron is running
+      // earlier or later than usual).
+      const timingMs = (w.reminderTimingHours ?? 0) * 60 * 60 * 1000;
+      const dueAt = new Date(w.date.getTime() - timingMs);
+      if (now < dueAt) continue; // not yet within the window — leave for tomorrow's run
+
+      workshopsProcessed++;
+      let anyAttempted = false;
+
+      for (const reg of w.registrations) {
+        anyAttempted = true;
+        try {
+          if (!reg.user.receiveEmails) {
+            workshopReminderSkipped++;
+            continue;
+          }
+
+          const { subject, html } = workshopReminderEmail({
+            name: reg.user.name || "תלמידה יקרה",
+            workshopTitle: w.title,
+            workshopDate: w.date,
+            customBody: w.reminderEmailContent,
+          });
+
+          await sendMarketingEmail(
+            { email: reg.user.email, receiveEmails: reg.user.receiveEmails },
+            { subject, html },
+          );
+          workshopReminderSent++;
+        } catch (err) {
+          workshopReminderFailed++;
+          console.error(
+            `[cron/reminders] workshop reminder failed for registration ${reg.id}:`,
+            err,
+          );
+        }
+      }
+
+      // Mark the workshop as sent regardless of whether individual
+      // recipients failed — we don't want the next cron run to spam
+      // the recipients who DID succeed. Failed sends are logged above
+      // for manual follow-up by Noa.
+      //
+      // If there were zero registrations (unlikely but possible),
+      // still mark sent so we don't keep re-querying it forever.
+      try {
+        await db.workshop.update({
+          where: { id: w.id },
+          data: { reminderSentAt: now },
+        });
+      } catch (err) {
+        console.error(
+          `[cron/reminders] failed to mark workshop ${w.id} as reminded:`,
+          err,
+        );
+      }
+
+      if (!anyAttempted) {
+        // Silently OK — workshop is marked sent. This typically means
+        // nobody had paid yet at the time of the reminder window.
       }
     }
 
     return NextResponse.json({
-      sent,
-      skipped,
-      total: bookings.length,
-      daysBefore: config.reminderDaysBefore,
+      classes: {
+        sent: classSent,
+        skipped: classSkipped,
+        failed: classFailed,
+        total: bookings.length,
+        daysBefore: config.reminderDaysBefore,
+      },
+      workshops: {
+        candidatesFound: workshopCandidates.length,
+        processed: workshopsProcessed,
+        sent: workshopReminderSent,
+        skipped: workshopReminderSkipped,
+        failed: workshopReminderFailed,
+      },
     });
   } catch (error) {
     console.error("[cron/reminders] failed:", error);

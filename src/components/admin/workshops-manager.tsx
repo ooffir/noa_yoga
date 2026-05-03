@@ -35,6 +35,9 @@ interface Workshop {
   price: number;
   imageUrl: string | null;
   maxCapacity: number | null;
+  reminderEmailContent: string | null;
+  reminderTimingHours: number | null;
+  reminderSentAt: string | null;
   _count: { registrations: number };
 }
 
@@ -55,6 +58,11 @@ export function WorkshopsManager() {
   const [imageUrl, setImageUrl] = useState("");
   const [imagePreview, setImagePreview] = useState("");
   const [maxCapacity, setMaxCapacity] = useState<number | "">("");
+  // Per-workshop reminder configuration. Both fields are optional; if
+  // `reminderTimingHours` is empty, the cron sends nothing for this
+  // workshop. The body supports {{name}} {{title}} {{date}} {{time}}.
+  const [reminderEmailContent, setReminderEmailContent] = useState("");
+  const [reminderTimingHours, setReminderTimingHours] = useState<number | "">("");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -100,6 +108,7 @@ export function WorkshopsManager() {
   const resetForm = () => {
     setEditId(null); setTitle(""); setDescription(""); setDate(""); setTime("10:00");
     setPrice(0); setImageUrl(""); setImagePreview(""); setMaxCapacity("");
+    setReminderEmailContent(""); setReminderTimingHours("");
   };
 
   const openCreate = () => { resetForm(); setShowForm(true); };
@@ -115,6 +124,8 @@ export function WorkshopsManager() {
     setImageUrl(w.imageUrl || "");
     setImagePreview(w.imageUrl || "");
     setMaxCapacity(w.maxCapacity || "");
+    setReminderEmailContent(w.reminderEmailContent || "");
+    setReminderTimingHours(w.reminderTimingHours ?? "");
     setShowForm(true);
   };
 
@@ -145,7 +156,17 @@ export function WorkshopsManager() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, date: dateTime, price, imageUrl: imageUrl || null, maxCapacity: maxCapacity || null }),
+        body: JSON.stringify({
+          title,
+          description,
+          date: dateTime,
+          price,
+          imageUrl: imageUrl || null,
+          maxCapacity: maxCapacity || null,
+          reminderEmailContent: reminderEmailContent.trim() || null,
+          reminderTimingHours:
+            reminderTimingHours === "" ? null : Number(reminderTimingHours),
+        }),
       });
       if (!res.ok) { const data = await res.json(); toast.error(data.error || "שגיאה"); return; }
       toast.success(editId ? "הסדנה עודכנה" : "הסדנה נוצרה");
@@ -335,6 +356,53 @@ export function WorkshopsManager() {
             <div>
               <label className="text-sm font-medium text-sage-700 mb-1 block">תיאור</label>
               <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="תיאור הסדנה..." rows={4} required className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y" />
+            </div>
+
+            {/* ════ תזכורת אוטומטית ════
+                Optional. If `reminderTimingHours` is empty, no reminder is
+                sent. The cron at /api/cron/reminders queries this once a day
+                and dispatches the message to all paid registrants. */}
+            <div className="rounded-2xl border border-sage-100 bg-sage-50/30 p-4 space-y-3">
+              <div>
+                <label className="text-sm font-medium text-sage-700 mb-1 block">תזכורת אוטומטית למשתתפות (אופציונלי)</label>
+                <p className="text-xs text-sage-500">המייל יישלח לפני הסדנה לכל מי ששילמה. השאירי ריק כדי לא לשלוח תזכורת.</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-sage-600 mb-1 block">מתי לשלוח (שעות לפני הסדנה)</label>
+                <select
+                  value={reminderTimingHours}
+                  onChange={(e) => setReminderTimingHours(e.target.value === "" ? "" : Number(e.target.value))}
+                  className="flex h-10 w-full rounded-xl border border-sage-200 bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500"
+                >
+                  <option value="">ללא תזכורת</option>
+                  <option value={24}>24 שעות לפני (יום לפני)</option>
+                  <option value={48}>48 שעות לפני (יומיים לפני)</option>
+                  <option value={72}>72 שעות לפני (שלושה ימים לפני)</option>
+                  <option value={168}>שבוע לפני</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-sage-600 mb-1 block">תוכן התזכורת</label>
+                <textarea
+                  value={reminderEmailContent}
+                  onChange={(e) => setReminderEmailContent(e.target.value)}
+                  placeholder="היי {{name}}, רק מזכירים שיש לנו סדנה {{title}} ב-{{date}} בשעה {{time}}. מומלץ להגיע 10 דק׳ לפני..."
+                  rows={5}
+                  disabled={reminderTimingHours === ""}
+                  className="flex w-full rounded-xl border border-sage-200 bg-white px-4 py-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500 resize-y disabled:bg-sage-50 disabled:text-sage-400"
+                />
+                <p className="mt-1 text-[11px] text-sage-400">
+                  משתנים נתמכים: <code className="bg-sage-100 px-1 rounded">{`{{name}}`}</code> · <code className="bg-sage-100 px-1 rounded">{`{{title}}`}</code> · <code className="bg-sage-100 px-1 rounded">{`{{date}}`}</code> · <code className="bg-sage-100 px-1 rounded">{`{{time}}`}</code>
+                </p>
+              </div>
+
+              {editId && (
+                <p className="text-[11px] text-sage-400 italic">
+                  שינוי שעת התזכורת או תאריך הסדנה יאפס את סימון השליחה — תזכורת חדשה תישלח שוב על-פי לוח הזמנים החדש.
+                </p>
+              )}
             </div>
 
             <Button type="submit" className="w-full rounded-2xl" disabled={saving || uploading}>

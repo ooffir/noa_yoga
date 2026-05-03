@@ -41,6 +41,16 @@ Thumbs.db
 *.pem
 .vercel
 
+# local debug / one-off scripts
+test-db.ps1
+*.local.ps1
+*.local.sh
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local debug / one-off scripts
+test-db.ps1
+*.local.ps1
+*.local.sh

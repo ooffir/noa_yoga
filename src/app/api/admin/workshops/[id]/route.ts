@@ -19,17 +19,67 @@ export async function PUT(
     }
 
     const { id } = await params;
-    const { title, description, date, price, imageUrl, maxCapacity } = await req.json();
+    const {
+      title,
+      description,
+      date,
+      price,
+      imageUrl,
+      maxCapacity,
+      reminderEmailContent,
+      reminderTimingHours,
+    } = await req.json();
+
+    // Compute the reminder fields as a partial update — when an admin
+    // edits an unrelated field (price, capacity, etc.), reminderSentAt
+    // must NOT be reset, otherwise the cron would re-fire a reminder
+    // that already went out.
+    //
+    // BUT: if the admin changed `reminderTimingHours` OR `date`, the
+    // previous send is no longer relevant — they're rescheduling. In
+    // that case, clear `reminderSentAt` so the cron fires fresh.
+    const existing = await db.workshop.findUnique({
+      where: { id },
+      select: {
+        date: true,
+        reminderTimingHours: true,
+      },
+    });
+
+    const newDate = date ? new Date(date) : undefined;
+    const newTiming =
+      reminderTimingHours != null && reminderTimingHours !== ""
+        ? Math.max(0, Number(reminderTimingHours))
+        : reminderTimingHours === null
+        ? null
+        : undefined;
+
+    const dateChanged =
+      existing && newDate && existing.date.getTime() !== newDate.getTime();
+    const timingChanged =
+      existing &&
+      newTiming !== undefined &&
+      existing.reminderTimingHours !== newTiming;
 
     const workshop = await db.workshop.update({
       where: { id },
       data: {
         title,
         description,
-        date: date ? new Date(date) : undefined,
+        date: newDate,
         price: price != null ? Number(price) : undefined,
         imageUrl: imageUrl || null,
         maxCapacity: maxCapacity ? Number(maxCapacity) : null,
+        ...(reminderEmailContent !== undefined && {
+          reminderEmailContent:
+            typeof reminderEmailContent === "string" && reminderEmailContent.trim()
+              ? reminderEmailContent
+              : null,
+        }),
+        ...(newTiming !== undefined && { reminderTimingHours: newTiming }),
+        // Reset the idempotency marker if the admin rescheduled OR
+        // changed the timing window. Otherwise leave it alone.
+        ...(dateChanged || timingChanged ? { reminderSentAt: null } : {}),
       },
     });
 
