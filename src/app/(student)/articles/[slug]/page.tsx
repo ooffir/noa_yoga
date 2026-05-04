@@ -82,11 +82,10 @@ export default async function ArticlePage({ params }: Props) {
         )}
 
         <div className="mt-16 rounded-[2rem] bg-gradient-to-bl from-sage-600 to-sage-700 p-8 text-center text-white sm:p-10">
-          <p className="text-xl font-bold sm:text-2xl">אהבתם את הכתבה? בואו לתרגל איתי</p>
-          <p className="mx-auto mt-3 max-w-md text-sm text-sage-200 leading-relaxed">
+          <p className="mx-auto max-w-2xl text-2xl font-bold leading-snug sm:text-3xl">
             המקום הכי טוב להמשיך את המסע הוא על המזרן.
           </p>
-          <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+          <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
             <Link
               href="/schedule"
               className="inline-flex items-center gap-2 rounded-3xl bg-white px-6 py-3 text-sm font-semibold text-sage-700 shadow-lg transition-all hover:bg-sage-50 active:scale-[0.97]"

@@ -8,6 +8,7 @@ import { he } from "date-fns/locale";
 import { BookButton } from "@/components/schedule/book-button";
 import { Clock, MapPin, User, ChevronRight, ChevronLeft, CalendarDays } from "lucide-react";
 import { toUTCDate } from "@/lib/utils";
+import { getCapacityStatus } from "@/lib/capacity-status";
 
 export const revalidate = 60;
 
@@ -206,7 +207,9 @@ export default async function SchedulePage({ searchParams }: Props) {
               </h2>
               <div className="space-y-3">
                 {dayInstances.map((inst) => {
-                  const isAvailable = inst._count.bookings < inst.maxCapacity;
+                  const availableSpots = inst.maxCapacity - inst._count.bookings;
+                  const capacity = getCapacityStatus(availableSpots);
+                  const isAvailable = capacity.hasSeats;
                   const isBooked = bookedSet.has(inst.id);
                   const isOnWaitlist = waitlistSet.has(inst.id);
                   const def = inst.classDefinition;
@@ -225,10 +228,23 @@ export default async function SchedulePage({ searchParams }: Props) {
                                   ? `מקום ${waitlistPositionByInstance[inst.id]} בתור`
                                   : "בהמתנה"}
                               </span>
-                            ) : isAvailable ? (
-                              <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-3 py-0.5 text-xs font-medium text-emerald-700">יש מקום</span>
                             ) : (
-                              <span className="inline-flex items-center rounded-full bg-red-50 border border-red-200 px-3 py-0.5 text-xs font-medium text-red-600">מלא</span>
+                              // Tier-based availability badge — copy + tone
+                              // come from getCapacityStatus() so schedule
+                              // and workshops stay visually consistent.
+                              <span
+                                className={`inline-flex items-center rounded-full border px-3 py-0.5 text-xs font-medium ${
+                                  capacity.tone === "available"
+                                    ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                    : capacity.tone === "limited"
+                                    ? "bg-amber-50 border-amber-200 text-amber-700"
+                                    : capacity.tone === "last"
+                                    ? "bg-orange-50 border-orange-200 text-orange-700"
+                                    : "bg-red-50 border-red-200 text-red-600"
+                                }`}
+                              >
+                                {capacity.label}
+                              </span>
                             )}
                           </div>
                           {def.description && (

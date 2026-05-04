@@ -79,6 +79,7 @@ interface AdminClass {
   instructor: string;
   maxCapacity: number;
   currentBookings: number;
+  isCancelled: boolean;
 }
 
 interface AttendanceBooking {
@@ -95,6 +96,10 @@ interface WaitlistEntry {
 
 export function AttendanceView() {
   const [weekOffset, setWeekOffset] = useState(0);
+  // Cancelled classes are hidden by default. Toggle re-fetches with
+  // ?includeCancelled=true so Noa can review attendance/refunds even on
+  // classes she's cancelled (audit trail).
+  const [showCancelled, setShowCancelled] = useState(false);
   const [classes, setClasses] = useState<AdminClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
@@ -106,11 +111,13 @@ export function AttendanceView() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/admin/schedule?week=${weekOffset}`)
+    const params = new URLSearchParams({ week: String(weekOffset) });
+    if (showCancelled) params.set("includeCancelled", "true");
+    fetch(`/api/admin/schedule?${params.toString()}`)
       .then((r) => r.json())
       .then((data) => setClasses(Array.isArray(data) ? data : []))
       .finally(() => setLoading(false));
-  }, [weekOffset]);
+  }, [weekOffset, showCancelled]);
 
   const loadAttendance = async (instanceId: string) => {
     setSelectedClass(instanceId);
@@ -199,7 +206,7 @@ export function AttendanceView() {
     <div className="grid md:grid-cols-2 gap-6">
       {/* ─── Class list ─── */}
       <div>
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-2">
           <Button variant="ghost" size="sm" onClick={() => setWeekOffset((w) => w + 1)}>
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -211,26 +218,52 @@ export function AttendanceView() {
           </Button>
         </div>
 
+        {/* ── הצג שיעורים שבוטלו — toggle, hidden by default ── */}
+        <label className="mb-3 flex items-center gap-2 text-xs text-sage-500 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showCancelled}
+            onChange={(e) => setShowCancelled(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-sage-300 text-sage-600 focus:ring-sage-500 accent-sage-600"
+          />
+          הצג שיעורים שבוטלו
+        </label>
+
         {loading ? (
           <PageLoader />
         ) : (
           <div className="space-y-2">
-            {classes.map((cls) => (
-              <button
-                key={cls.id}
-                onClick={() => loadAttendance(cls.id)}
-                className={`w-full text-right rounded-2xl border p-3 transition-colors ${
-                  selectedClass === cls.id
-                    ? "border-sage-400 bg-sage-50"
-                    : "border-sage-100 bg-white hover:bg-sage-50/50"
-                }`}
-              >
-                <p className="font-medium text-sage-900 text-sm">{cls.title}</p>
-                <p className="text-xs text-sage-500">
-                  {format(new Date(cls.date), "EEEE, d בMMMM", { locale: he })} · {formatTime(cls.startTime)} · {cls.currentBookings}/{cls.maxCapacity}
-                </p>
-              </button>
-            ))}
+            {classes.length === 0 ? (
+              <Card className="rounded-3xl">
+                <CardContent className="py-8 text-center text-sage-400 text-sm">
+                  אין שיעורים בשבוע זה
+                </CardContent>
+              </Card>
+            ) : (
+              classes.map((cls) => (
+                <button
+                  key={cls.id}
+                  onClick={() => loadAttendance(cls.id)}
+                  className={`w-full text-right rounded-2xl border p-3 transition-colors ${
+                    selectedClass === cls.id
+                      ? "border-sage-400 bg-sage-50"
+                      : "border-sage-100 bg-white hover:bg-sage-50/50"
+                  } ${cls.isCancelled ? "opacity-50" : ""}`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-medium text-sage-900 text-sm">{cls.title}</p>
+                    {cls.isCancelled && (
+                      <Badge className="rounded-full text-[10px] bg-red-50 text-red-600 border border-red-200">
+                        מבוטל
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-sage-500">
+                    {format(new Date(cls.date), "EEEE, d בMMMM", { locale: he })} · {formatTime(cls.startTime)} · {cls.currentBookings}/{cls.maxCapacity}
+                  </p>
+                </button>
+              ))
+            )}
           </div>
         )}
       </div>

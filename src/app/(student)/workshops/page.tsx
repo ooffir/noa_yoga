@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
 import { cancelWorkshop, isPaymeFailure } from "@/lib/payments";
+import { getCapacityStatus } from "@/lib/capacity-status";
 
 // Always read fresh payment state from the DB so the confirmation banner
 // reflects the webhook update immediately after redirect.
@@ -153,9 +154,13 @@ export default async function WorkshopsPage({ searchParams }: Props) {
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {workshops.map((workshop) => {
-            const isFull = workshop.maxCapacity
-              ? workshop._count.registrations >= workshop.maxCapacity
-              : false;
+            // `null` maxCapacity means "no limit set" — treat as unlimited
+            // (the helper renders "יש מקום" for that case).
+            const availableSpots = workshop.maxCapacity
+              ? workshop.maxCapacity - workshop._count.registrations
+              : null;
+            const capacity = getCapacityStatus(availableSpots);
+            const isFull = !capacity.hasSeats;
 
             return (
               <div
@@ -205,6 +210,26 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                       {workshop.description}
                     </ReactMarkdown>
                   </div>
+
+                  {/*
+                   * Show a urgency badge (נשארו N מקומות / נשאר מקום אחרון)
+                   * above the price+CTA row when capacity is limited but
+                   * not full. Hidden for the relaxed "יש מקום" tone — no
+                   * urgency to communicate, the register button is enough.
+                   */}
+                  {(capacity.tone === "limited" || capacity.tone === "last") && (
+                    <div className="mb-2">
+                      <span
+                        className={`inline-flex items-center rounded-full border px-3 py-0.5 text-xs font-medium ${
+                          capacity.tone === "last"
+                            ? "bg-orange-50 border-orange-200 text-orange-700"
+                            : "bg-amber-50 border-amber-200 text-amber-700"
+                        }`}
+                      >
+                        {capacity.label}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between pt-3 border-t border-sage-50">
                     <span className="text-xl font-bold text-sage-800">₪{workshop.price}</span>

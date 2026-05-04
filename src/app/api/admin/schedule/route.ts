@@ -23,7 +23,14 @@ export async function GET(req: Request) {
       weekOffset
     );
 
-    const schedule = await getAdminWeeklySchedule(weekStart);
+    // Cancelled classes are hidden by default. The Schedule + Attendance
+    // admin views each have their own "הצג שיעורים שבוטלו" toggle that
+    // sets this query param when on.
+    const includeCancelled = searchParams.get("includeCancelled") === "true";
+
+    const schedule = await getAdminWeeklySchedule(weekStart, {
+      includeCancelled,
+    });
     return NextResponse.json(schedule);
   } catch {
     return NextResponse.json(

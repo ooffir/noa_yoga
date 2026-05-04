@@ -1,15 +1,13 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { Metadata } from "next";
-import { Show, UserButton } from "@clerk/nextjs";
+import { Show, UserButton, ClerkLoaded } from "@clerk/nextjs";
 import {
   Wind, Heart, ArrowLeft, Flower2, Sun, Leaf, Sparkles,
   Star, Moon, Mountain, Waves, Eye, Hand,
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import type { LucideIcon } from "lucide-react";
-
-const TRACE = process.env.NODE_ENV === "development";
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Wind, Heart, Flower2, Sun, Leaf, Sparkles,
@@ -93,12 +91,9 @@ function renderAboutContent(text: string) {
 // ───── Main page — synchronous server render, no hydration flash ─────
 
 export default async function LandingPage() {
-  if (TRACE) console.time("landing:page-render");
-
   // Single parallel fetch — the server blocks until we have fresh DB values.
   // The HTML sent to the browser already contains the correct content,
   // so there is no "old text → new text" flash on hydration.
-  if (TRACE) console.time("landing:db");
   let settings: {
     heroTitle: string | null;
     heroSubtitle: string | null;
@@ -134,7 +129,6 @@ export default async function LandingPage() {
   } catch (err) {
     console.error("[landing] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
   }
-  if (TRACE) console.timeEnd("landing:db");
 
   // Empty-string fallbacks — better a blank space for 200ms than stale hardcoded text.
   const heroTitle = settings?.heroTitle || "";
@@ -156,7 +150,17 @@ export default async function LandingPage() {
               <Link href="/profile" className="rounded-2xl bg-sage-100 px-3 py-1.5 text-sm font-medium text-sage-700 transition-colors hover:bg-sage-200">
                 אזור אישי
               </Link>
-              <UserButton />
+              {/*
+               * Wrap UserButton in ClerkLoaded so it only renders after
+               * Clerk's JS bundle has hydrated on the client. Without this,
+               * the SSR placeholder differs from the client-side avatar
+               * widget (refs / portals), producing a noisy "Hydration
+               * failed" error in dev. The error is recoverable in prod but
+               * pollutes the console — this fix removes it cleanly.
+               */}
+              <ClerkLoaded>
+                <UserButton />
+              </ClerkLoaded>
             </Show>
             <Show when="signed-out">
               <Link href="/sign-in" className="rounded-2xl bg-sage-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sage-700 active:scale-[0.97]">
@@ -365,6 +369,5 @@ export default async function LandingPage() {
     </div>
   );
 
-  if (TRACE) console.timeEnd("landing:page-render");
   return page;
 }

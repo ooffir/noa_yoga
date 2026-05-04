@@ -154,14 +154,24 @@ export async function getWeeklySchedule(weekStartDate?: Date) {
   }));
 }
 
-export async function getAdminWeeklySchedule(weekStartDate?: Date) {
+export async function getAdminWeeklySchedule(
+  weekStartDate?: Date,
+  opts?: { includeCancelled?: boolean },
+) {
   const start = weekStartDate || startOfWeek(new Date(), { weekStartsOn: 0 });
   const startUTC = toUTCDate(start);
   const endUTC = toUTCDate(addDays(start, 7));
 
+  // By default, hide cancelled instances from admin views — keeps the
+  // schedule + attendance lists focused on what's actually happening.
+  // Pass `includeCancelled: true` (e.g. via the "הצג שיעורים שבוטלו"
+  // toggle) to surface them again for review/audit.
+  const includeCancelled = opts?.includeCancelled ?? false;
+
   const instances = await db.classInstance.findMany({
     where: {
       date: { gte: startUTC, lt: endUTC },
+      ...(includeCancelled ? {} : { isCancelled: false }),
     },
     include: {
       classDefinition: true,

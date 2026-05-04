@@ -2,24 +2,18 @@ import { Navbar } from "@/components/layout/navbar";
 import { getSessionUser } from "@/lib/auth-helpers";
 import { db } from "@/lib/db";
 
-const TRACE = process.env.NODE_ENV === "development";
-
 export async function NavbarServer() {
-  if (TRACE) console.time("layout:navbar.getSessionUser");
   const dbUser = await getSessionUser();
-  if (TRACE) console.timeEnd("layout:navbar.getSessionUser");
 
   // Sum direct credits + active punch-card credits so the navbar badge
   // matches what the booking engine actually lets the user spend.
   let totalCredits = 0;
   if (dbUser) {
     try {
-      if (TRACE) console.time("layout:navbar.punchCardSum");
       const punchCardAgg = await db.punchCard.aggregate({
         where: { userId: dbUser.id, status: "ACTIVE" },
         _sum: { remainingCredits: true },
       });
-      if (TRACE) console.timeEnd("layout:navbar.punchCardSum");
       totalCredits = (dbUser.credits ?? 0) + (punchCardAgg._sum.remainingCredits ?? 0);
     } catch {
       totalCredits = dbUser.credits ?? 0;

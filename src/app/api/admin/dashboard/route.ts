@@ -141,7 +141,15 @@ export async function GET() {
           include: {
             _count: { select: { bookings: { where: { status: "CONFIRMED" } } } },
           },
-          where: { date: { gte: monthStart, lte: monthEnd } },
+          where: {
+            date: { gte: monthStart, lte: monthEnd },
+            // Defensive: cancelled instances already have 0 confirmed
+            // bookings (the cancellation cascade flips them to CANCELLED),
+            // so they can't inflate the popularity count anyway. But
+            // explicitly excluding them here keeps the intent obvious in
+            // the query and protects against future schema changes.
+            isCancelled: false,
+          },
         },
       },
     }),

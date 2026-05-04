@@ -86,6 +86,9 @@ export function ScheduleBuilder() {
   // modes; this just changes what gets rendered from the same data.
   // No DB writes happen on tab change — pure client-side filtering.
   const [view, setView] = useState<"upcoming" | "history">("upcoming");
+  // Cancelled classes are hidden by default. Toggle re-fetches with
+  // ?includeCancelled=true so the admin can review/audit them when needed.
+  const [showCancelled, setShowCancelled] = useState(false);
   const [classes, setClasses] = useState<AdminClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -102,14 +105,16 @@ export function ScheduleBuilder() {
   const fetchSchedule = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/schedule?week=${weekOffset}`);
+      const params = new URLSearchParams({ week: String(weekOffset) });
+      if (showCancelled) params.set("includeCancelled", "true");
+      const res = await fetch(`/api/admin/schedule?${params.toString()}`);
       const data = await res.json();
       setClasses(Array.isArray(data) ? data : []);
     } catch {
       toast.error("שגיאה בטעינת מערכת השעות");
     }
     setLoading(false);
-  }, [weekOffset]);
+  }, [weekOffset, showCancelled]);
 
   useEffect(() => {
     fetchSchedule();
@@ -310,7 +315,7 @@ export function ScheduleBuilder() {
       </div>
 
       {/* ── כותרת + ניווט ── */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setWeekOffset((w) => w + 1)}>
             <ChevronRight className="h-4 w-4" />
@@ -333,6 +338,17 @@ export function ScheduleBuilder() {
           </Button>
         )}
       </div>
+
+      {/* ── הצג שיעורים שבוטלו — toggle, hidden by default ── */}
+      <label className="mb-4 flex items-center gap-2 text-xs text-sage-500 select-none cursor-pointer">
+        <input
+          type="checkbox"
+          checked={showCancelled}
+          onChange={(e) => setShowCancelled(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-sage-300 text-sage-600 focus:ring-sage-500 accent-sage-600"
+        />
+        הצג שיעורים שבוטלו
+      </label>
 
       {/* ── רשימת שיעורים (filtered by tab) ── */}
       {loading ? (
