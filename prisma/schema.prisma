@@ -402,13 +402,25 @@ model WorkshopRegistration {
   id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String                  @map("user_id") @db.Uuid
   workshopId    String                  @map("workshop_id") @db.Uuid
+
+  // Number of tickets in this single purchase. Each WorkshopRegistration
+  // row represents ONE purchase event — a user who buys 2 tickets, then
+  // later buys 3 more, will have 2 rows (quantity=2 and quantity=3).
+  // Capacity checks SUM quantity across all non-CANCELLED rows.
+  // Range enforced at the API layer: 1 ≤ quantity ≤ 5.
+  quantity      Int                     @default(1)
+
   paymentStatus workshop_payment_status @default(PENDING) @map("payment_status")
   createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, workshopId])
+  // The previous @@unique([userId, workshopId]) was removed so a user
+  // can purchase additional tickets later (each purchase = its own row
+  // with its own payment lifecycle). Lookup performance is restored by
+  // the composite index below.
+  @@index([userId, workshopId, paymentStatus])
   @@index([workshopId, paymentStatus])
   @@map("workshop_registrations")
 }

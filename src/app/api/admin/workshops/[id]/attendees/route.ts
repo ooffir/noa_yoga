@@ -67,6 +67,12 @@ export async function GET(_req: Request, { params }: Params) {
       orderBy: [{ paymentStatus: "asc" }, { createdAt: "asc" }],
     });
 
+    // Helper: sum tickets (quantity) across a filtered subset. Used for
+    // the summary cards — counts tickets purchased, not rows. A single
+    // buyer with quantity=3 contributes 3 to the "paid" tally.
+    const sumQty = (filter: (r: (typeof registrations)[number]) => boolean) =>
+      registrations.filter(filter).reduce((s, r) => s + r.quantity, 0);
+
     return NextResponse.json({
       workshop: {
         id: workshop.id,
@@ -81,12 +87,20 @@ export async function GET(_req: Request, { params }: Params) {
         phone: r.user.phone,
         paymentStatus: r.paymentStatus,
         registeredAt: r.createdAt,
+        // Tickets purchased in THIS registration row. The admin UI
+        // renders "(x2)" next to the name when > 1.
+        quantity: r.quantity,
       })),
       summary: {
-        total: registrations.length,
-        paid: registrations.filter((r) => r.paymentStatus === "COMPLETED").length,
-        pending: registrations.filter((r) => r.paymentStatus === "PENDING").length,
-        cancelled: registrations.filter((r) => r.paymentStatus === "CANCELLED").length,
+        // Total ROWS (one per purchase event) — useful to see how many
+        // separate transactions happened.
+        totalRows: registrations.length,
+        // Total TICKETS = sum of quantity across all non-cancelled rows.
+        // This is the "seats taken" number that matches capacity math.
+        total: sumQty((r) => r.paymentStatus !== "CANCELLED"),
+        paid: sumQty((r) => r.paymentStatus === "COMPLETED"),
+        pending: sumQty((r) => r.paymentStatus === "PENDING"),
+        cancelled: sumQty((r) => r.paymentStatus === "CANCELLED"),
       },
     });
   } catch (err) {

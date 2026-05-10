@@ -19,12 +19,22 @@ interface Attendee {
   phone: string | null;
   paymentStatus: "PENDING" | "COMPLETED" | "CANCELLED";
   registeredAt: string;
+  /** Tickets purchased in this registration row. Defaults to 1. */
+  quantity: number;
 }
 
 interface AttendeesPayload {
   workshop: { id: string; title: string; date: string };
   attendees: Attendee[];
-  summary: { total: number; paid: number; pending: number; cancelled: number };
+  summary: {
+    /** Number of REGISTRATION ROWS (one per purchase event). */
+    totalRows: number;
+    /** Total TICKETS (sum of quantity) across non-cancelled rows. */
+    total: number;
+    paid: number;
+    pending: number;
+    cancelled: number;
+  };
 }
 
 interface Workshop {
@@ -38,7 +48,12 @@ interface Workshop {
   reminderEmailContent: string | null;
   reminderTimingHours: number | null;
   reminderSentAt: string | null;
-  _count: { registrations: number };
+  /**
+   * Tickets sold = sum of quantity across non-cancelled registrations.
+   * Replaces the previous _count.registrations (which only counted
+   * ROWS, not tickets — that under-counted seats taken).
+   */
+  ticketsSold: number;
 }
 
 export function WorkshopsManager() {
@@ -261,9 +276,10 @@ export function WorkshopsManager() {
                         {format(new Date(w.date), "d בMMMM yyyy · HH:mm", { locale: he })} · ₪{w.price}
                       </p>
                       {/* Clickable attendee count → opens the attendees dialog.
-                          Only enabled when there are actually registrations,
-                          to avoid a useless "0 nothing to show" dialog. */}
-                      {w._count.registrations > 0 ? (
+                          Counts TICKETS sold (not rows), so a buyer with
+                          quantity=2 counts as 2. Disabled at 0 to avoid
+                          an empty dialog. */}
+                      {w.ticketsSold > 0 ? (
                         <button
                           type="button"
                           onClick={() => openAttendees(w.id)}
@@ -271,11 +287,11 @@ export function WorkshopsManager() {
                           aria-label="צפייה ברשימת המשתתפות"
                         >
                           <Users className="h-3 w-3" />
-                          {w._count.registrations} נרשמו · צפייה
+                          {w.ticketsSold} כרטיסים · צפייה
                         </button>
                       ) : (
                         <p className="text-xs text-sage-400 flex items-center gap-1 mt-0.5">
-                          <Users className="h-3 w-3" /> 0 נרשמו
+                          <Users className="h-3 w-3" /> 0 כרטיסים
                         </p>
                       )}
                     </div>
@@ -438,11 +454,13 @@ export function WorkshopsManager() {
             </div>
           ) : (
             <div className="space-y-4 mt-2">
-              {/* Summary bar */}
+              {/* Summary bar — all counts are TICKETS (sum of quantity),
+                  not rows. So a single buyer with quantity=3 contributes
+                  3 to both "סה״כ" and "שילמו". */}
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-2xl bg-sage-50/50 px-2 py-3">
                   <p className="text-lg font-bold text-sage-900">{attendeesData.summary.total}</p>
-                  <p className="text-[10px] text-sage-500">סה״כ</p>
+                  <p className="text-[10px] text-sage-500">כרטיסים</p>
                 </div>
                 <div className="rounded-2xl bg-emerald-50/40 px-2 py-3">
                   <p className="text-lg font-bold text-emerald-700">{attendeesData.summary.paid}</p>
@@ -472,6 +490,13 @@ export function WorkshopsManager() {
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sage-900 text-sm truncate">
                           {a.name || "ללא שם"}
+                          {/* Show ticket count only when > 1 — saves
+                              clutter on single-ticket purchases. */}
+                          {a.quantity > 1 && (
+                            <span className="mr-1 inline-flex items-center rounded-full border border-sage-200 bg-sage-50 px-1.5 py-0 text-[10px] font-semibold text-sage-700 align-middle">
+                              ×{a.quantity}
+                            </span>
+                          )}
                         </p>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-sage-500 mt-0.5">
                           <span className="flex items-center gap-1">

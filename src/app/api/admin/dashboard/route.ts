@@ -112,15 +112,24 @@ export async function GET() {
     // agurot — that's a historical inconsistency we're not changing
     // now). Multiply by 100 below to align units with Payment.amount.
     //
+    // Multi-ticket support: each WorkshopRegistration row carries a
+    // `quantity` (default 1). The buyer is charged price × quantity,
+    // so the revenue sum must include the quantity multiplier.
+    //
+    // `workshop_count` counts TICKETS (sum of quantity), not rows —
+    // matches what the dashboard tile labels as "מכירות". A buyer with
+    // quantity=3 contributes 3 to the sales count.
+    //
     // Aggregating across the JOIN with raw SQL because Prisma's
-    // .aggregate() doesn't support summing a field on a related row.
+    // .aggregate() doesn't support summing a computed expression on a
+    // related row.
     db.$queryRaw<
       Array<{ workshop_revenue_agurot: bigint; workshop_count: bigint }>
     >(
       Prisma.sql`
         SELECT
-          COALESCE(SUM(w.price), 0)::bigint * 100 AS workshop_revenue_agurot,
-          COUNT(*)::bigint AS workshop_count
+          COALESCE(SUM(w.price * wr.quantity), 0)::bigint * 100 AS workshop_revenue_agurot,
+          COALESCE(SUM(wr.quantity), 0)::bigint AS workshop_count
         FROM workshop_registrations wr
         JOIN workshops w ON w.id = wr.workshop_id
         WHERE wr.payment_status = 'COMPLETED'

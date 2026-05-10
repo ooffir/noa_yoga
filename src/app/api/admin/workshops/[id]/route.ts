@@ -159,10 +159,18 @@ export async function DELETE(
           date: workshop.date,
           price: workshop.price,
         },
+        // Refund email uses the total amount actually paid — that's
+        // workshop.price × quantity for each registration row, NOT the
+        // unit price. A buyer with 3 tickets needs to see a refund of
+        // (price × 3), not (price × 1).
         affected: workshop.registrations.map((r) => ({
           email: r.user.email,
           name: r.user.name,
           wasPaid: r.paymentStatus === "COMPLETED",
+          quantity: r.quantity,
+          totalPaidIls: r.paymentStatus === "COMPLETED"
+            ? workshop.price * r.quantity
+            : 0,
         })),
       };
     }, { isolationLevel: "Serializable", timeout: 15_000 });
@@ -177,7 +185,8 @@ export async function DELETE(
           name: student.name || "תלמידה יקרה",
           workshopTitle: workshop.title,
           workshopDate: workshop.date,
-          amountIls: workshop.price,
+          // Total refund = unit price × tickets purchased.
+          amountIls: student.totalPaidIls,
         });
         sendTransactionalEmail({ to: student.email, subject, html }).catch(
           (err) =>

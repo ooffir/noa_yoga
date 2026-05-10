@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
@@ -13,33 +13,55 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import toast from "react-hot-toast";
+import { AlertTriangle } from "lucide-react";
 import { generatePaymeSaleForWorkshop } from "@/actions/payme";
 import { ProfileGateDialog } from "@/components/profile/profile-gate-dialog";
 
 interface Props {
   workshopId: string;
   workshopTitle: string;
+  /** Per-ticket price in ILS (the total = workshopPrice × quantity). */
   workshopPrice: number;
+  /**
+   * Remaining seats on this workshop. `null` = unlimited capacity (no
+   * limit set). When a number, the quantity dropdown is capped at
+   * min(5, availableSpots) so the user can't pick more tickets than
+   * actually exist.
+   */
+  availableSpots: number | null;
+  /**
+   * How many tickets THIS user already has CONFIRMED on this workshop.
+   * When > 0, a warning banner appears in the consent dialog asking
+   * them to confirm they want to buy more (= bringing more guests).
+   */
+  userExistingTickets: number;
 }
 
+// Hard cap matches the server-side MAX_WORKSHOP_QUANTITY_PER_PURCHASE.
+const MAX_QUANTITY = 5;
+
 /**
- * Workshop register button — two-step flow.
+ * Workshop register button — three-step flow.
  *
- *   Step 1: click "הירשמו ושלמו" → opens a consent dialog that discloses
- *           the cancellation / refund policy (required by Israeli
- *           Consumer Protection Law חוק הגנת הצרכן סעיף 14ג for
- *           remote / online transactions).
- *   Step 2: user checks the box + clicks "אישור והמשך לתשלום" →
- *           server action runs, PayMe page opens.
+ *   Step 1: click "הירשמו ושלמו" → opens a consent dialog with:
+ *           • repeat-purchase warning (if userExistingTickets > 0)
+ *           • cancellation / refund policy
+ *           • quantity dropdown (1..min(5, availableSpots))
+ *           • live total price = workshopPrice × quantity
+ *   Step 2: user checks the consent box + clicks "אישור והמשך לתשלום"
+ *   Step 3: server action runs, PayMe page opens with the multiplied total.
  *
- * The disclosure must be visible at point of sale, not buried in a
- * `/refund-policy` footer link — this is the legal distinction between
- * "available" and "prominent".
+ * Repeat-purchase warning required because we removed the
+ * @@unique([userId, workshopId]) constraint — a user can now legitimately
+ * buy more tickets for the same workshop (e.g. bringing a friend later).
+ * The warning makes sure that's intentional and not a mistake.
  */
 export function WorkshopRegisterButton({
   workshopId,
   workshopTitle,
   workshopPrice,
+  availableSpots,
+  userExistingTickets,
 }: Props) {
   const { isSignedIn } = useUser();
   const router = useRouter();
@@ -47,11 +69,28 @@ export function WorkshopRegisterButton({
   const [redirecting, setRedirecting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [consented, setConsented] = useState(false);
+  const [quantity, setQuantity] = useState(1);
   // Synchronous double-click guard — useState is batched, useRef is not.
   const submittingRef = useRef(false);
   const [profileGateOpen, setProfileGateOpen] = useState(false);
 
   const loading = pending || redirecting;
+
+  // Quantity range clamps to min(5, availableSpots). When availableSpots
+  // is null we assume unlimited and use the global MAX_QUANTITY.
+  const maxQuantity = useMemo(() => {
+    if (availableSpots == null) return MAX_QUANTITY;
+    return Math.min(MAX_QUANTITY, Math.max(1, availableSpots));
+  }, [availableSpots]);
+
+  // Build dropdown options 1..maxQuantity inclusive.
+  const quantityOptions = useMemo(
+    () => Array.from({ length: maxQuantity }, (_, i) => i + 1),
+    [maxQuantity],
+  );
+
+  const totalPrice = workshopPrice * quantity;
+  const hasRepeatWarning = userExistingTickets > 0;
 
   const openDialog = () => {
     if (!isSignedIn) {
@@ -59,6 +98,7 @@ export function WorkshopRegisterButton({
       return;
     }
     setConsented(false);
+    setQuantity(1);
     setDialogOpen(true);
   };
 
@@ -71,7 +111,7 @@ export function WorkshopRegisterButton({
     submittingRef.current = true;
 
     startTransition(async () => {
-      const result = await generatePaymeSaleForWorkshop(workshopId);
+      const result = await generatePaymeSaleForWorkshop(workshopId, quantity);
 
       if (!result.ok) {
         if (result.requiresProfile) {
@@ -110,16 +150,74 @@ export function WorkshopRegisterButton({
               הרשמה לסדנה
             </DialogTitle>
             <DialogDescription>
-              {workshopTitle} · ₪{workshopPrice}
+              {workshopTitle} · ₪{workshopPrice} לכרטיס
             </DialogDescription>
           </DialogHeader>
 
+          {/* ════ Repeat-purchase warning (only when user already has tickets) ════ */}
+          {hasRepeatWarning && (
+            <div className="mb-4 flex items-start gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div>
+                <p className="font-bold text-amber-900">
+                  שימי לב: יש לך כבר רישום פעיל לסדנה
+                </p>
+                <p className="mt-1 text-sm text-amber-800 leading-relaxed">
+                  כבר רכשת {userExistingTickets}{" "}
+                  {userExistingTickets === 1 ? "כרטיס" : "כרטיסים"} לסדנה זו.
+                  האם את בטוחה שברצונך לרכוש כרטיסים נוספים? (לדוגמה — להבאת
+                  חברה או בן זוג)
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ════ Quantity selector + live total ════ */}
+          <div className="mb-4 rounded-2xl border border-sage-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <label
+                  htmlFor="workshop-quantity"
+                  className="block text-sm font-medium text-sage-700"
+                >
+                  כמות כרטיסים
+                </label>
+                {availableSpots != null && availableSpots <= MAX_QUANTITY && (
+                  <p className="mt-0.5 text-[11px] text-sage-500">
+                    נשארו {availableSpots}{" "}
+                    {availableSpots === 1 ? "מקום" : "מקומות"} בלבד
+                  </p>
+                )}
+              </div>
+              <select
+                id="workshop-quantity"
+                value={quantity}
+                onChange={(e) => setQuantity(Number(e.target.value))}
+                className="flex h-10 min-w-[80px] rounded-xl border border-sage-200 bg-white px-3 text-sm font-semibold text-sage-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage-500"
+              >
+                {quantityOptions.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-3 flex items-baseline justify-between border-t border-sage-100 pt-3">
+              <span className="text-sm text-sage-600">סך הכל לתשלום</span>
+              <span className="text-2xl font-bold text-sage-900">
+                ₪{totalPrice.toLocaleString("he-IL")}
+              </span>
+            </div>
+          </div>
+
+          {/* ════ Cancellation policy disclosure ════ */}
           <div className="rounded-2xl border border-sage-200 bg-sage-50 p-4 text-sm leading-relaxed text-sage-700">
             <p className="font-bold text-sage-900 mb-2">תנאי ביטול והחזר כספי</p>
             <ul className="list-disc pr-5 space-y-1.5 text-[13px] text-sage-600">
               <li>
                 ביטול <strong>עד 14 ימים לפני</strong> מועד הסדנה — החזר כספי
-                מלא של ₪{workshopPrice}.
+                מלא של ₪{totalPrice.toLocaleString("he-IL")}.
               </li>
               <li>
                 ביטול <strong>7–14 ימים לפני</strong> — החזר של 50% מסכום הרכישה.
@@ -174,7 +272,7 @@ export function WorkshopRegisterButton({
               {loading ? (
                 <Spinner className="h-4 w-4" />
               ) : (
-                "אישור והמשך לתשלום"
+                `אישור ותשלום ₪${totalPrice.toLocaleString("he-IL")}`
               )}
             </Button>
           </div>

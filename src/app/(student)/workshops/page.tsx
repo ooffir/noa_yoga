@@ -9,6 +9,7 @@ import remarkBreaks from "remark-breaks";
 import { WorkshopRegisterButton } from "@/components/workshops/register-button";
 import { cancelWorkshop, isPaymeFailure } from "@/lib/payments";
 import { getCapacityStatus } from "@/lib/capacity-status";
+import { getDbUser } from "@/lib/get-db-user";
 
 // Always read fresh payment state from the DB so the confirmation banner
 // reflects the webhook update immediately after redirect.
@@ -32,7 +33,10 @@ export const metadata: Metadata = {
 };
 
 type WorkshopRow = Awaited<ReturnType<typeof prisma.workshop.findMany>>[number] & {
-  _count: { registrations: number };
+  /** Sum of quantity across non-cancelled registrations. */
+  ticketsSold: number;
+  /** Tickets THIS user (if logged in) already has confirmed for this workshop. 0 otherwise. */
+  userExistingTickets: number;
 };
 
 interface Props {
@@ -65,12 +69,48 @@ export default async function WorkshopsPage({ searchParams }: Props) {
     }
   }
 
+  // Resolve current user (if signed in) so we can compute their existing
+  // ticket count per workshop for the repeat-purchase warning.
+  const currentUser = await getDbUser().catch(() => null);
+
   let workshops: WorkshopRow[] = [];
   try {
-    workshops = await prisma.workshop.findMany({
+    const rows = await prisma.workshop.findMany({
       where: { isActive: true, date: { gte: new Date() } },
       orderBy: { date: "asc" },
-      include: { _count: { select: { registrations: { where: { paymentStatus: { not: "CANCELLED" } } } } } },
+      include: {
+        // Sum quantity across non-cancelled registrations for capacity.
+        registrations: {
+          where: { paymentStatus: { not: "CANCELLED" } },
+          select: { userId: true, quantity: true, paymentStatus: true },
+        },
+      },
+    });
+
+    workshops = rows.map((w) => {
+      const ticketsSold = w.registrations.reduce(
+        (sum, r) => sum + r.quantity,
+        0,
+      );
+      // Only COMPLETED registrations count for the "you already bought"
+      // warning — pending purchases shouldn't trigger it (the user is
+      // mid-flow on a previous purchase, not making a separate decision).
+      const userExistingTickets = currentUser
+        ? w.registrations
+            .filter(
+              (r) =>
+                r.userId === currentUser.id && r.paymentStatus === "COMPLETED",
+            )
+            .reduce((sum, r) => sum + r.quantity, 0)
+        : 0;
+      // Strip the raw registrations array — the UI only needs the
+      // computed totals, not individual rows.
+      return {
+        ...w,
+        registrations: undefined as never,
+        ticketsSold,
+        userExistingTickets,
+      } as unknown as WorkshopRow;
     });
   } catch (err) {
     console.error("[workshops] DB unreachable, rendering empty state:", err instanceof Error ? err.message : err);
@@ -155,9 +195,10 @@ export default async function WorkshopsPage({ searchParams }: Props) {
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {workshops.map((workshop) => {
             // `null` maxCapacity means "no limit set" — treat as unlimited
-            // (the helper renders "יש מקום" for that case).
+            // (the helper renders "יש מקום" for that case). `ticketsSold`
+            // is the SUM of quantity across non-cancelled registrations.
             const availableSpots = workshop.maxCapacity
-              ? workshop.maxCapacity - workshop._count.registrations
+              ? workshop.maxCapacity - workshop.ticketsSold
               : null;
             const capacity = getCapacityStatus(availableSpots);
             const isFull = !capacity.hasSeats;
@@ -242,6 +283,12 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                         workshopId={workshop.id}
                         workshopTitle={workshop.title}
                         workshopPrice={workshop.price}
+                        // null = unlimited capacity. Otherwise the
+                        // dropdown is capped at min(5, remainingSpots).
+                        availableSpots={availableSpots}
+                        // Tickets THIS user already has confirmed.
+                        // Triggers the repeat-purchase warning when > 0.
+                        userExistingTickets={workshop.userExistingTickets}
                       />
                     )}
                   </div>

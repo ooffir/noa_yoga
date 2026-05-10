@@ -13,10 +13,26 @@ export async function GET() {
 
     const workshops = await db.workshop.findMany({
       orderBy: { date: "desc" },
-      include: { _count: { select: { registrations: true } } },
+      include: {
+        registrations: {
+          where: { paymentStatus: { not: "CANCELLED" } },
+          select: { quantity: true },
+        },
+      },
     });
 
-    return NextResponse.json(workshops);
+    // Compute tickets sold (SUM of quantity) per workshop. This is the
+    // seats-taken number the admin actually cares about — counting rows
+    // would under-count buyers with quantity > 1.
+    const payload = workshops.map((w) => ({
+      ...w,
+      ticketsSold: w.registrations.reduce((s, r) => s + r.quantity, 0),
+      // Don't leak the raw registrations array — it's only used for the
+      // sum and the admin list doesn't need per-row detail here.
+      registrations: undefined,
+    }));
+
+    return NextResponse.json(payload);
   } catch (err) {
     console.error("[admin/workshops GET] failed:", err);
     const { message, status } = dbErrorResponse(err, "שגיאה");

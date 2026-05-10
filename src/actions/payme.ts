@@ -205,11 +205,42 @@ async function callGenerateSale(
 //  Workshop registration
 // ─────────────────────────────────────────────────────────────────────
 
+// Maximum tickets a single user can buy in one transaction. Keeps the
+// UX simple ("pick 1–5 from the dropdown") and prevents abuse via the
+// API. Capacity may further restrict the choice (e.g. only 3 seats left).
+//
+// NOTE: NOT exported — "use server" files may only export async
+// functions. The client mirrors this value as a local const in
+// `src/components/workshops/register-button.tsx`. Keep them in sync.
+const MAX_WORKSHOP_QUANTITY_PER_PURCHASE = 5;
+
+// Server-side dedup window — if the same user clicked "Buy" with the
+// same quantity within this many ms and the row is still PENDING,
+// reuse it instead of creating a new row. Defends against rapid
+// double-clicks that would otherwise spawn parallel PENDING rows after
+// we dropped the @@unique([userId, workshopId]) constraint.
+const WORKSHOP_DEDUP_WINDOW_MS = 60_000;
+
 export async function generatePaymeSaleForWorkshop(
   workshopId: string,
+  quantityInput?: number,
 ): Promise<PaymeSaleResult> {
   if (!workshopId || typeof workshopId !== "string") {
     return { ok: false, error: "מזהה סדנה חסר" };
+  }
+
+  // ── Quantity validation ──
+  // Treat missing / non-numeric as 1 (matches the dropdown default).
+  // Clamp to the 1..MAX range — anything outside is a tampered request.
+  const quantity = Math.max(
+    1,
+    Math.min(
+      MAX_WORKSHOP_QUANTITY_PER_PURCHASE,
+      Math.floor(Number(quantityInput ?? 1)),
+    ),
+  );
+  if (!Number.isFinite(quantity) || quantity < 1) {
+    return { ok: false, error: "כמות כרטיסים לא תקינה" };
   }
 
   const user = await getDbUser();
@@ -233,41 +264,63 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "הסדנה כבר התקיימה" };
   }
 
-  // Atomic capacity check + registration upsert (Serializable so two
-  // simultaneous "register" clicks for the last seat can't both succeed).
+  // Atomic capacity check + registration create (Serializable so two
+  // simultaneous "register" clicks for the last seats can't both succeed).
+  //
+  // Capacity math:
+  //   currentlyTaken = SUM(quantity) WHERE paymentStatus != CANCELLED
+  //   remaining      = workshop.maxCapacity - currentlyTaken
+  //   ok             = remaining >= quantity
+  //
+  // The dedup branch reuses a PENDING row from the same user with the
+  // same quantity created within the last 60s to absorb double-clicks.
   type RegistrationResult =
-    | { kind: "already_completed" }
-    | { kind: "full" }
+    | { kind: "full"; remaining: number }
     | { kind: "ok"; registrationId: string };
 
   let txResult: RegistrationResult;
   try {
     txResult = await db.$transaction(
       async (tx) => {
-        const existing = await tx.workshopRegistration.findUnique({
-          where: { userId_workshopId: { userId: user.id, workshopId } },
-        });
-        if (existing && existing.paymentStatus === "COMPLETED") {
-          return { kind: "already_completed" as const };
-        }
-
         if (workshop.maxCapacity) {
-          const count = await tx.workshopRegistration.count({
+          const taken = await tx.workshopRegistration.aggregate({
             where: { workshopId, paymentStatus: { not: "CANCELLED" } },
+            _sum: { quantity: true },
           });
-          const userCountsAsNewSeat = !(
-            existing && existing.paymentStatus === "PENDING"
-          );
-          if (count + (userCountsAsNewSeat ? 1 : 0) > workshop.maxCapacity) {
-            return { kind: "full" as const };
+          const currentlyTaken = taken._sum.quantity ?? 0;
+          const remaining = workshop.maxCapacity - currentlyTaken;
+
+          if (remaining < quantity) {
+            return { kind: "full" as const, remaining: Math.max(0, remaining) };
           }
         }
 
-        const registration = await tx.workshopRegistration.upsert({
-          where: { userId_workshopId: { userId: user.id, workshopId } },
-          create: { userId: user.id, workshopId, paymentStatus: "PENDING" },
-          update: { paymentStatus: "PENDING" },
+        // Dedup window — reuse a recent PENDING row from the same user
+        // with the same quantity, so a double-click doesn't create two
+        // rows the user then has to navigate between.
+        const dedupSince = new Date(Date.now() - WORKSHOP_DEDUP_WINDOW_MS);
+        const recentPending = await tx.workshopRegistration.findFirst({
+          where: {
+            userId: user.id,
+            workshopId,
+            quantity,
+            paymentStatus: "PENDING",
+            createdAt: { gte: dedupSince },
+          },
+          orderBy: { createdAt: "desc" },
         });
+
+        const registration =
+          recentPending ??
+          (await tx.workshopRegistration.create({
+            data: {
+              userId: user.id,
+              workshopId,
+              quantity,
+              paymentStatus: "PENDING",
+            },
+          }));
+
         return {
           kind: "ok" as const,
           registrationId: registration.id,
@@ -280,18 +333,30 @@ export async function generatePaymeSaleForWorkshop(
     return { ok: false, error: "אירעה שגיאה, נסו שוב" };
   }
 
-  if (txResult.kind === "already_completed") {
-    return { ok: false, error: "כבר נרשמת לסדנה זו" };
-  }
   if (txResult.kind === "full") {
-    return { ok: false, error: "הסדנה מלאה" };
+    const left = txResult.remaining;
+    return {
+      ok: false,
+      error:
+        left === 0
+          ? "הסדנה מלאה"
+          : `נשארו ${left} מקומות בלבד — אנא הקטיני את כמות הכרטיסים`,
+    };
   }
 
   const registrationId = txResult.registrationId;
+  const totalAmountIls = workshop.price * quantity;
+
+  // Product name on the PayMe checkout page — show the multiplier when
+  // buying more than 1 ticket so the buyer sees a clear breakdown.
+  const productName =
+    quantity > 1
+      ? `${workshop.title} × ${quantity}`
+      : workshop.title;
 
   return callGenerateSale({
-    amountIls: workshop.price,
-    productName: workshop.title,
+    amountIls: totalAmountIls,
+    productName,
     transactionId: registrationId, // ← same id we'll receive in the IPN
     userEmail: user.email,
     userName: user.name,

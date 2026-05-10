@@ -275,7 +275,16 @@ export async function completeWorkshopSuccess(
     revalidatePath("/workshops");
   } catch {}
 
-  const workshopProductLabel = `סדנה: ${reg.workshop.title}`;
+  // Total amount paid = workshop.price × quantity. Used in the receipt,
+  // the invoice automation, and the email.
+  const totalAmountIls = reg.workshop.price * reg.quantity;
+
+  // Product label includes the multiplier when buying >1 ticket so the
+  // receipt + tax invoice clearly disclose what was purchased.
+  const workshopProductLabel =
+    reg.quantity > 1
+      ? `סדנה: ${reg.workshop.title} × ${reg.quantity}`
+      : `סדנה: ${reg.workshop.title}`;
 
   // ── Side effect 1: Workshop registration confirmation email ──
   // Replaces the previously-sent generic payment receipt with a
@@ -287,9 +296,10 @@ export async function completeWorkshopSuccess(
       name: reg.user.name || "תלמידה יקרה",
       workshopTitle: reg.workshop.title,
       workshopDate: reg.workshop.date,
-      amountIls: reg.workshop.price,
+      amountIls: totalAmountIls,
       transactionId: reg.id,
       workshopDescription: reg.workshop.description,
+      quantity: reg.quantity,
     });
     sendTransactionalEmail({ to: reg.user.email, subject, html }).catch((err) =>
       console.error("[payments] workshop confirmation email failed:", err),
@@ -306,7 +316,7 @@ export async function completeWorkshopSuccess(
     customerName: reg.user.name || "תלמידה יקרה",
     customerEmail: reg.user.email,
     productLabel: workshopProductLabel,
-    amountIls: reg.workshop.price,
+    amountIls: totalAmountIls,
     transactionDate: new Date(),
   })
     .then((result) => {

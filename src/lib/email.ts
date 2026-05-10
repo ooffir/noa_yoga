@@ -748,16 +748,45 @@ export interface WorkshopConfirmationParams {
   name: string;
   workshopTitle: string;
   workshopDate: Date;
+  /** Total amount paid (workshop.price × quantity). */
   amountIls: number;
   transactionId: string;
   /** Optional — included verbatim so the user has a recap of what they paid for. */
   workshopDescription?: string | null;
+  /** Number of tickets purchased. Defaults to 1 if omitted. */
+  quantity?: number;
 }
 
 export function workshopRegistrationConfirmationEmail(p: WorkshopConfirmationParams) {
   const formattedDate = formatHebrewDate(p.workshopDate);
   const startTime = `${String(p.workshopDate.getHours()).padStart(2, "0")}:${String(p.workshopDate.getMinutes()).padStart(2, "0")}`;
   const formattedAmount = `${p.amountIls.toLocaleString("he-IL", { maximumFractionDigits: 2 })} ₪`;
+  const quantity = Math.max(1, Math.floor(p.quantity ?? 1));
+
+  // Optional "כמות כרטיסים" row — only rendered when > 1 to avoid
+  // unnecessary noise on the common single-ticket case.
+  const quantityRow =
+    quantity > 1
+      ? `
+        <tr>
+          <td style="padding:4px 0;color:${SAGE_500};">כמות כרטיסים</td>
+          <td style="padding:4px 0;font-weight:600;">${quantity}</td>
+        </tr>
+      `
+      : "";
+
+  // Subject line varies subtly based on quantity so the recipient can
+  // see at a glance whether they bought one or more tickets.
+  const subject =
+    quantity > 1
+      ? `הרשמתך ל-${quantity} כרטיסים לסדנה ${p.workshopTitle} אושרה — Noa Yogis`
+      : `הרשמתך לסדנה ${p.workshopTitle} אושרה — Noa Yogis`;
+
+  // Intro copy adjusts to mention the friends if quantity > 1.
+  const intro =
+    quantity > 1
+      ? `היי ${escapeHtml(p.name)}, איזה כיף שרכשת ${quantity} כרטיסים לסדנה. שמרנו לכם מקום ומחכים לראות את כולכם.`
+      : `היי ${escapeHtml(p.name)}, איזה כיף שנרשמת לסדנה. שמרנו לך מקום ונשמח לראות אותך.`;
 
   const body = `
     <div style="margin-bottom:8px;color:${SAGE_900};font-size:14px;font-weight:700;">פרטי הסדנה:</div>
@@ -774,6 +803,7 @@ export function workshopRegistrationConfirmationEmail(p: WorkshopConfirmationPar
         <td style="padding:4px 0;color:${SAGE_500};">שעה</td>
         <td style="padding:4px 0;font-weight:600;">${escapeHtml(startTime)}</td>
       </tr>
+      ${quantityRow}
     </table>
 
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed ${SAGE_100};margin-bottom:8px;color:${SAGE_900};font-size:14px;font-weight:700;">פרטי תשלום:</div>
@@ -790,10 +820,10 @@ export function workshopRegistrationConfirmationEmail(p: WorkshopConfirmationPar
   `;
 
   return {
-    subject: `הרשמתך לסדנה ${p.workshopTitle} אושרה — Noa Yogis`,
+    subject,
     html: renderEmail({
       title: "ההרשמה אושרה!",
-      intro: `היי ${escapeHtml(p.name)}, איזה כיף שנרשמת לסדנה. שמרנו לך מקום ונשמח לראות אותך.`,
+      intro,
       body,
       ctaLabel: "פרטי הסדנה",
       ctaUrl: `${SITE_URL}/workshops`,

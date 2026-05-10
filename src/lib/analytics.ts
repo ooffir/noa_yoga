@@ -130,7 +130,10 @@ export async function weeklyRevenue(
     prisma.$queryRaw<Array<{ week_start: Date; total_agurot: bigint }>>(Prisma.sql`
       SELECT
         DATE_TRUNC('week', wr.created_at)::date as week_start,
-        COALESCE(SUM(w.price * 100), 0)::bigint as total_agurot
+        -- Multi-ticket support: each registration row carries a quantity
+        -- column (default 1). Buyer was charged price times quantity,
+        -- so the revenue sum must include that multiplier.
+        COALESCE(SUM(w.price * wr.quantity * 100), 0)::bigint as total_agurot
       FROM workshop_registrations wr
       JOIN workshops w ON w.id = wr.workshop_id
       WHERE wr.payment_status = 'COMPLETED'
