@@ -29,6 +29,8 @@ export function ArticlesManager() {
   const [imagePreview, setImagePreview] = useState("");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Per-row deletion state — see workshops-manager for rationale.
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fetchArticles = useCallback(async () => {
@@ -130,10 +132,13 @@ export function ArticlesManager() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק כתבה זו?")) return;
+    setDeletingId(id);
     try {
       const res = await fetch(`/api/admin/articles/${id}`, { method: "DELETE" });
       if (res.ok) { toast.success("הכתבה נמחקה"); fetchArticles(); }
+      else toast.error("מחיקה נכשלה");
     } catch { toast.error("מחיקה נכשלה"); }
+    finally { setDeletingId(null); }
   };
 
   if (loading) return <PageLoader />;
@@ -178,8 +183,18 @@ export function ArticlesManager() {
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(a)}>
                       <Pencil className="h-3.5 w-3.5 text-sage-400" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(a.id)}>
-                      <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleDelete(a.id)}
+                      disabled={deletingId === a.id}
+                    >
+                      {deletingId === a.id ? (
+                        <Spinner className="h-3.5 w-3.5" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      )}
                     </Button>
                   </div>
                 </div>

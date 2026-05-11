@@ -190,12 +190,20 @@ export function WorkshopsManager() {
     finally { setSaving(false); }
   };
 
+  // Per-row deletion state. While a workshop is being deleted, its
+  // trash button shows a spinner instead of the icon so the admin
+  // gets instant feedback that the click registered. Without this,
+  // a slow round-trip looked like the button was broken.
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const handleDelete = async (id: string) => {
     if (!confirm("להשבית סדנה זו?")) return;
+    setDeletingId(id);
     try {
       const res = await fetch(`/api/admin/workshops/${id}`, { method: "DELETE" });
       if (res.ok) { toast.success("הסדנה הושבתה"); fetchWorkshops(); }
+      else toast.error("מחיקה נכשלה");
     } catch { toast.error("מחיקה נכשלה"); }
+    finally { setDeletingId(null); }
   };
 
   if (loading) return <PageLoader />;
@@ -307,8 +315,18 @@ export function WorkshopsManager() {
                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(w)}>
                         <Pencil className="h-3.5 w-3.5 text-sage-400" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(w.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleDelete(w.id)}
+                        disabled={deletingId === w.id}
+                      >
+                        {deletingId === w.id ? (
+                          <Spinner className="h-3.5 w-3.5" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                        )}
                       </Button>
                     </div>
                   )}

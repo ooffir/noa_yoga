@@ -222,23 +222,36 @@ export function ScheduleBuilder() {
     }
   };
 
+  // Track which row is currently mutating. Used to render an inline
+  // spinner inside the row's button so the admin sees instant feedback
+  // (the click registered, work is in progress, button is disabled).
+  //
+  // We share one piece of state for both delete and cancel because a
+  // single row can only have one in-flight action at a time anyway —
+  // the admin already confirmed via window.confirm().
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
   const handleDeleteDef = async (classDefId: string) => {
     if (!confirm("להשבית את השיעור הזה? כל המופעים העתידיים יבוטלו.")) return;
-
+    setProcessingId(classDefId);
     try {
       const res = await fetch(`/api/admin/schedule/${classDefId}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("השיעור הושבת");
         fetchSchedule();
+      } else {
+        toast.error("השבתת השיעור נכשלה");
       }
     } catch {
       toast.error("השבתת השיעור נכשלה");
+    } finally {
+      setProcessingId(null);
     }
   };
 
   const handleCancelInstance = async (instanceId: string) => {
     if (!confirm("לבטל מופע זה בלבד?")) return;
-
+    setProcessingId(instanceId);
     try {
       const res = await fetch(`/api/admin/instances/${instanceId}`, {
         method: "PATCH",
@@ -248,9 +261,13 @@ export function ScheduleBuilder() {
       if (res.ok) {
         toast.success("המופע בוטל");
         fetchSchedule();
+      } else {
+        toast.error("ביטול המופע נכשל");
       }
     } catch {
       toast.error("ביטול המופע נכשל");
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -445,6 +462,7 @@ export function ScheduleBuilder() {
                               onClick={() => openEdit(cls)}
                               className="text-sage-400 hover:text-sage-700 hover:bg-sage-50 h-8 w-8"
                               title="עריכה"
+                              disabled={processingId === cls.id || processingId === cls.classDefId}
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -453,8 +471,13 @@ export function ScheduleBuilder() {
                               onClick={() => handleCancelInstance(cls.id)}
                               className="text-amber-400 hover:text-amber-600 hover:bg-amber-50 h-8 w-8"
                               title="ביטול מופע זה"
+                              disabled={processingId === cls.id || processingId === cls.classDefId}
                             >
-                              <X className="h-3.5 w-3.5" />
+                              {processingId === cls.id ? (
+                                <Spinner className="h-3.5 w-3.5" />
+                              ) : (
+                                <X className="h-3.5 w-3.5" />
+                              )}
                             </Button>
                             {cls.isRecurring && (
                               <Button
@@ -462,8 +485,13 @@ export function ScheduleBuilder() {
                                 onClick={() => handleDeleteDef(cls.classDefId)}
                                 className="text-red-400 hover:text-red-600 hover:bg-red-50 h-8 w-8"
                                 title="השבתת כל השיעורים"
+                                disabled={processingId === cls.id || processingId === cls.classDefId}
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                {processingId === cls.classDefId ? (
+                                  <Spinner className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
                               </Button>
                             )}
                           </div>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Show, UserButton } from "@clerk/nextjs";
+import { Show, UserButton, ClerkLoaded } from "@clerk/nextjs";
 import { Flower2, CalendarDays, Home, CircleUserRound, Settings, Newspaper, Sparkles } from "lucide-react";
 
 interface NavbarProps {
@@ -84,9 +84,20 @@ export function Navbar({ isAdmin = false, totalCredits = 0 }: NavbarProps) {
                 </Link>
               )}
 
-              <div className="shrink-0">
-                <UserButton />
-              </div>
+              {/*
+               * Wrap UserButton in ClerkLoaded so it only renders after
+               * Clerk's JS bundle has hydrated on the client. Without
+               * this, the SSR placeholder differs from the client-side
+               * avatar widget (refs / portals), producing the
+               * "Hydration failed" error on every navigation. The
+               * error is recoverable but pollutes the dev overlay.
+               * Same fix is applied on the public landing page.
+               */}
+              <ClerkLoaded>
+                <div className="shrink-0">
+                  <UserButton />
+                </div>
+              </ClerkLoaded>
             </Show>
 
             <Show when="signed-out">

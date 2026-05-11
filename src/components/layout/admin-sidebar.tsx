@@ -31,6 +31,13 @@ export function AdminSidebar() {
               <Link
                 key={item.href}
                 href={item.href}
+                // Disable prefetch on admin nav — every admin sub-route
+                // is force-dynamic and contains data that Noa may have
+                // JUST mutated on the page she's coming from. Prefetch
+                // would warm a stale RSC payload that overrides the
+                // fresh one when she lands. Better to take the small
+                // round-trip cost and never see ghost data.
+                prefetch={false}
                 className={cn(
                   "inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-medium transition-colors",
                   isActive

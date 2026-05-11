@@ -2,7 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { PricingCards } from "@/components/pricing/pricing-cards";
 import type { Metadata } from "next";
 
-export const revalidate = 60;
+// Pricing is admin-editable from /admin/settings — make the page fully
+// dynamic so a price change is reflected on the next request, not up
+// to 60s later. The query itself is small and indexed; the latency
+// cost of dropping ISR is negligible.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "מחירון יוגה בחיפה — שיעור בודד וכרטיסיות",

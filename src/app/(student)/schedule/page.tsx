@@ -10,7 +10,14 @@ import { Clock, MapPin, User, ChevronRight, ChevronLeft, CalendarDays } from "lu
 import { toUTCDate } from "@/lib/utils";
 import { getCapacityStatus } from "@/lib/capacity-status";
 
-export const revalidate = 60;
+// Always render fresh — schedule data changes constantly (bookings,
+// cancellations, capacity updates) and a 60s ISR window meant users
+// could see stale "available" badges for up to a minute after a class
+// filled up. The inner DB query is still cached via `unstable_cache`
+// with a "schedule" tag, so successive renders within a hot Lambda
+// container still hit the cache for the heavy `findMany`.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "מערכת שעות יוגה בחיפה — שיעורים שבועיים",
