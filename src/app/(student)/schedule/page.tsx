@@ -7,7 +7,7 @@ import { format, startOfWeek, addDays, addWeeks } from "date-fns";
 import { he } from "date-fns/locale";
 import { BookButton } from "@/components/schedule/book-button";
 import { Clock, MapPin, User, ChevronRight, ChevronLeft, CalendarDays } from "lucide-react";
-import { toUTCDate } from "@/lib/utils";
+import { toUTCDate, isClassPast } from "@/lib/utils";
 import { getCapacityStatus } from "@/lib/capacity-status";
 
 // Always render fresh — schedule data changes constantly (bookings,
@@ -221,13 +221,42 @@ export default async function SchedulePage({ searchParams }: Props) {
                   const isOnWaitlist = waitlistSet.has(inst.id);
                   const def = inst.classDefinition;
 
+                  // ── isPast: has the class's START time already passed? ──
+                  // Uses `isClassPast` which is timezone-aware: it computes
+                  // the class's actual start moment in Asia/Jerusalem (DST-
+                  // safe) before comparing to `Date.now()`. Previously this
+                  // used naive `setHours()` which was off by 2-3 hours on
+                  // Vercel UTC, causing past classes to remain "active" for
+                  // several hours after they ended.
+                  const isPast = isClassPast(inst.date, inst.startTime);
+
                   return (
-                    <div key={inst.id} className="rounded-3xl border border-sage-100 bg-white p-5 shadow-sm hover:shadow-md transition-all">
+                    <div
+                      key={inst.id}
+                      className={`rounded-3xl border border-sage-100 bg-white p-5 shadow-sm transition-all ${
+                        isPast
+                          ? "opacity-60 grayscale-[0.4]"
+                          : "hover:shadow-md"
+                      }`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-bold text-sage-900 text-base truncate">{def.title}</h3>
-                            {isBooked ? (
+                            {/*
+                             * Past classes: a neutral gray "הסתיים" badge
+                             * dominates over the capacity badge — there's
+                             * no useful info in "X seats left" once the
+                             * class has started. The "רשום/ה" / "ממתינה"
+                             * badge is also subsumed since the card body
+                             * is muted anyway; surfacing them on a faded
+                             * card was confusing for past instances.
+                             */}
+                            {isPast ? (
+                              <span className="inline-flex items-center rounded-full bg-sage-100 border border-sage-200 px-3 py-0.5 text-xs font-medium text-sage-500">
+                                הסתיים
+                              </span>
+                            ) : isBooked ? (
                               <span className="inline-flex items-center rounded-full bg-sage-100 px-3 py-0.5 text-xs font-medium text-sage-700">רשום/ה</span>
                             ) : isOnWaitlist ? (
                               <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-3 py-0.5 text-xs font-medium text-amber-700">
@@ -275,7 +304,16 @@ export default async function SchedulePage({ searchParams }: Props) {
                           </div>
                         </div>
                         <div className="shrink-0 pt-1">
-                          {isBooked ? (
+                          {/*
+                           * Past classes: hide ALL action buttons.
+                           * - "הרשמה" makes no sense — class has started
+                           * - "ביטול" makes no sense — you can't get a credit
+                           *   refund for a class that has already started
+                           * - "רשימת המתנה" makes no sense — capacity is moot
+                           * Leave the space empty so the card collapses
+                           * its right-side action column to just the badge.
+                           */}
+                          {isPast ? null : isBooked ? (
                             <BookButton
                               classInstanceId={inst.id}
                               action="cancel"

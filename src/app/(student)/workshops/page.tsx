@@ -203,10 +203,21 @@ export default async function WorkshopsPage({ searchParams }: Props) {
             const capacity = getCapacityStatus(availableSpots);
             const isFull = !capacity.hasSeats;
 
+            // ── isPast: has the workshop's start time already passed? ──
+            // workshop.date is a full DateTime (date + time), so a single
+            // comparison covers it. The SQL query above already filters
+            // by `date: { gte: new Date() }`, but if the user sits on
+            // the page while a workshop's start time passes, this client-
+            // side check ensures we don't keep showing the register
+            // button for an event that's now started.
+            const isPast = new Date(workshop.date).getTime() < Date.now();
+
             return (
               <div
                 key={workshop.id}
-                className="flex flex-col overflow-hidden rounded-3xl border border-sage-100 bg-white shadow-sm transition-shadow hover:shadow-md"
+                className={`flex flex-col overflow-hidden rounded-3xl border border-sage-100 bg-white shadow-sm transition-shadow ${
+                  isPast ? "opacity-60 grayscale-[0.4]" : "hover:shadow-md"
+                }`}
               >
                 <div className="relative aspect-video w-full overflow-hidden bg-sage-50">
                   {workshop.imageUrl ? (
@@ -257,24 +268,39 @@ export default async function WorkshopsPage({ searchParams }: Props) {
                    * above the price+CTA row when capacity is limited but
                    * not full. Hidden for the relaxed "יש מקום" tone — no
                    * urgency to communicate, the register button is enough.
+                   *
+                   * Past workshops suppress urgency badges entirely —
+                   * no point telling the user "1 spot left" for an event
+                   * that's already started.
                    */}
-                  {(capacity.tone === "limited" || capacity.tone === "last") && (
-                    <div className="mb-2">
-                      <span
-                        className={`inline-flex items-center rounded-full border px-3 py-0.5 text-xs font-medium ${
-                          capacity.tone === "last"
-                            ? "bg-orange-50 border-orange-200 text-orange-700"
-                            : "bg-amber-50 border-amber-200 text-amber-700"
-                        }`}
-                      >
-                        {capacity.label}
-                      </span>
-                    </div>
-                  )}
+                  {!isPast &&
+                    (capacity.tone === "limited" || capacity.tone === "last") && (
+                      <div className="mb-2">
+                        <span
+                          className={`inline-flex items-center rounded-full border px-3 py-0.5 text-xs font-medium ${
+                            capacity.tone === "last"
+                              ? "bg-orange-50 border-orange-200 text-orange-700"
+                              : "bg-amber-50 border-amber-200 text-amber-700"
+                          }`}
+                        >
+                          {capacity.label}
+                        </span>
+                      </div>
+                    )}
 
                   <div className="flex items-center justify-between pt-3 border-t border-sage-50">
                     <span className="text-xl font-bold text-sage-800">₪{workshop.price}</span>
-                    {isFull ? (
+                    {/*
+                     * Three-state CTA row:
+                     *   isPast → neutral gray "הסתיים" badge, no register button
+                     *   isFull → red "מלא" badge, no register button
+                     *   default → register button with quantity selector
+                     */}
+                    {isPast ? (
+                      <span className="rounded-2xl bg-sage-100 border border-sage-200 px-4 py-2 text-sm font-medium text-sage-500">
+                        הסתיים
+                      </span>
+                    ) : isFull ? (
                       <span className="rounded-2xl bg-red-50 px-4 py-2 text-sm font-medium text-red-600">
                         מלא
                       </span>

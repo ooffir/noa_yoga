@@ -15,6 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { PageLoader, Spinner } from "@/components/ui/loading";
+import { isClassPast } from "@/lib/utils";
 import toast from "react-hot-toast";
 
 interface AdminClass {
@@ -276,12 +277,12 @@ export function ScheduleBuilder() {
   // "is the class start time before now?". Grouping happens AFTER
   // filtering so empty days don't render headers. Pure client-side
   // logic — NO database queries or deletions.
-  const now = Date.now();
+  //
+  // Timezone-correct via isClassPast() which evaluates in Asia/Jerusalem
+  // (handles DST). Previously this used naive setHours() and misclassified
+  // upcoming/history by 2-3 hours on Vercel UTC.
   const filteredClasses = classes.filter((cls) => {
-    const [hh, mm] = cls.startTime.split(":").map(Number);
-    const dt = new Date(cls.date);
-    dt.setHours(hh, mm, 0, 0);
-    const isPast = dt.getTime() < now;
+    const isPast = isClassPast(new Date(cls.date), cls.startTime);
     return view === "history" ? isPast : !isPast;
   });
 

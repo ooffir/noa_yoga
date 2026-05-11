@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loading";
+import { israelClassStartUtcMs } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -41,15 +42,25 @@ export function CancelBookingDialog({
   const [submitting, setSubmitting] = useState(false);
 
   // Recompute on every render so the dialog always reflects current time.
+  //
+  // Timezone correctness is CRITICAL here: this dialog drives whether the
+  // user gets a credit refund. Previously used naive `setHours()` which
+  // was wrong by 2-3 hours on Vercel UTC, so users could be denied refunds
+  // they were entitled to (or granted refunds outside the window).
+  //
+  // `israelClassStartUtcMs` evaluates the class start moment in Asia/
+  // Jerusalem (DST-aware) and returns its UTC timestamp. `classMoment`
+  // is a Date for display only (formatHebrewDate uses local TZ — fine
+  // because the date portion stays correct cross-TZ for all classes
+  // that aren't in the dead of night).
   const { canRefund, hoursUntilClass, classMoment } = useMemo(() => {
-    const [h, m] = classStartTime.split(":").map(Number);
-    const dt = new Date(classDate);
-    dt.setHours(h, m, 0, 0);
-    const diff = (dt.getTime() - Date.now()) / (1000 * 60 * 60);
+    const classDateObj = new Date(classDate);
+    const classStartMs = israelClassStartUtcMs(classDateObj, classStartTime);
+    const diff = (classStartMs - Date.now()) / (1000 * 60 * 60);
     return {
       canRefund: diff >= cancellationHoursBefore,
       hoursUntilClass: Math.max(0, diff),
-      classMoment: dt,
+      classMoment: new Date(classStartMs),
     };
   }, [classDate, classStartTime, cancellationHoursBefore]);
 

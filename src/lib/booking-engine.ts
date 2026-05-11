@@ -10,6 +10,7 @@ import {
   getCancellationWindowHours,
   getEmailDispatchConfig,
 } from "@/lib/site-settings";
+import { israelClassStartUtcMs } from "@/lib/utils";
 
 const BookingStatus = { CONFIRMED: "CONFIRMED", CANCELLED: "CANCELLED", NO_SHOW: "NO_SHOW" } as const;
 const WaitlistStatus = { WAITING: "WAITING", PROMOTED: "PROMOTED", EXPIRED: "EXPIRED", CANCELLED: "CANCELLED" } as const;
@@ -149,10 +150,16 @@ export class BookingEngine {
         if (!classInstance) throw new Error("השיעור לא נמצא");
         if (classInstance.isCancelled) throw new Error("השיעור בוטל");
 
-        const classDate = new Date(classInstance.date);
-        const [h, m] = classInstance.startTime.split(":").map(Number);
-        classDate.setHours(h, m, 0, 0);
-        if (classDate < new Date()) throw new Error("לא ניתן להירשם לשיעור שעבר");
+        // Timezone-correct comparison (handles Israel DST). Previously
+        // used naive setHours() which was off by 2-3h on Vercel UTC,
+        // so for a brief window users could book a class that had
+        // already started.
+        const classStartMs = israelClassStartUtcMs(
+          new Date(classInstance.date),
+          classInstance.startTime,
+        );
+        if (classStartMs < Date.now())
+          throw new Error("לא ניתן להירשם לשיעור שעבר");
 
         const existingBooking = await tx.booking.findUnique({
           where: { userId_classInstanceId: { userId, classInstanceId } },
@@ -337,10 +344,16 @@ export class BookingEngine {
         if (booking.userId !== userId) throw new Error("אין הרשאה");
         if (booking.status !== BookingStatus.CONFIRMED) throw new Error("ההזמנה לא פעילה");
 
-        const [hours, minutes] = booking.classInstance.startTime.split(":").map(Number);
-        const classDateTime = new Date(booking.classInstance.date);
-        classDateTime.setHours(hours, minutes, 0, 0);
-        const diffHours = (classDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
+        // Timezone-correct refund window calculation. This is the AUTHORITATIVE
+        // check — even if the client-side dialog gets it wrong, this is what
+        // grants/denies the credit refund. Previously used naive setHours()
+        // which on Vercel UTC was off by 2-3h, leading to users being
+        // incorrectly granted/denied refunds near the cancellation boundary.
+        const classStartMs = israelClassStartUtcMs(
+          new Date(booking.classInstance.date),
+          booking.classInstance.startTime,
+        );
+        const diffHours = (classStartMs - Date.now()) / (1000 * 60 * 60);
         const canRefund = diffHours >= cancellationHours;
 
         await tx.booking.update({
